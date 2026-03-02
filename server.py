@@ -17,8 +17,8 @@ from scraper import scrape_note_by_url, scrape_search, fetch_url
 from utils import (clamp, validate_enum, validate_keyword,
                    validate_id, validate_cookie, validate_file_path)
 
-logging.basicConfig(level=logging.INFO, stream=sys.stderr)
 logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 
 def _tool_error_handler(func):
@@ -314,6 +314,18 @@ if __name__ == "__main__":
         help="HTTP 监听地址（默认 127.0.0.1）",
     )
     args = parser.parse_args()
+
+    # stdio 模式：仅 WARNING 日志，避免干扰 MCP 协议；HTTP 模式：正常 INFO
+    if args.transport == "stdio":
+        logging.basicConfig(
+            level=logging.WARNING, stream=sys.stderr,
+            format="%(levelname)s - %(name)s - %(message)s",
+        )
+    else:
+        logging.basicConfig(
+            level=logging.INFO, stream=sys.stderr,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        )
 
     if args.transport in ("sse", "streamable-http"):
         mcp.settings.host = args.host

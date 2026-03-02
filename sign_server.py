@@ -5,6 +5,7 @@ Scrapling/Patchright 用于 scraper.py 的增强爬取模块。
 """
 
 import logging
+import threading
 import time
 
 from flask import Flask, request, jsonify
@@ -12,7 +13,7 @@ from gevent import monkey
 from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
 
-monkey.patch_all()
+monkey.patch_all()  # threading.Lock 自动变为 gevent 安全锁
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -20,6 +21,9 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 stealth = Stealth()
+
+# 浏览器操作全局锁：保护 context_page / browser_context 的并发访问
+_browser_lock = threading.Lock()
 
 
 def get_context_page(instance):
@@ -73,62 +77,82 @@ for cookie in cookies:
 logger.info("签名服务就绪，监听 127.0.0.1:5555...")
 
 
+_SIGN_MAX_RETRIES = 3
+
+
 def sign(uri, data, a1, web_session):
-    """调用浏览器签名函数，失败时自动重新加载页面重试"""
+    """调用浏览器签名函数，带重试和并发保护"""
     global context_page, browser_context
-    try:
-        encrypt_params = context_page.evaluate(
-            "([url, data]) => window._webmsxyw(url, data)", [uri, data]
-        )
-    except Exception:
-        logger.warning("签名函数调用失败，尝试重新加载页面...")
-        try:
-            context_page.goto("https://www.xiaohongshu.com/explore",
-                              wait_until="domcontentloaded", timeout=15000)
-            time.sleep(3)
-        except Exception:
-            context_page.reload(wait_until="domcontentloaded", timeout=15000)
-            time.sleep(3)
-        encrypt_params = context_page.evaluate(
-            "([url, data]) => window._webmsxyw(url, data)", [uri, data]
-        )
-    return {
-        "x-s": encrypt_params["X-s"],
-        "x-t": str(encrypt_params["X-t"]),
-    }
+
+    with _browser_lock:
+        last_error = None
+        for attempt in range(_SIGN_MAX_RETRIES):
+            try:
+                encrypt_params = context_page.evaluate(
+                    "([url, data]) => window._webmsxyw(url, data)", [uri, data]
+                )
+                return {
+                    "x-s": encrypt_params["X-s"],
+                    "x-t": str(encrypt_params["X-t"]),
+                }
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "签名函数调用失败 (第%d/%d次): %s",
+                    attempt + 1, _SIGN_MAX_RETRIES, e,
+                )
+                if attempt < _SIGN_MAX_RETRIES - 1:
+                    try:
+                        context_page.goto(
+                            "https://www.xiaohongshu.com/explore",
+                            wait_until="domcontentloaded", timeout=15000,
+                        )
+                        time.sleep(3)
+                    except Exception:
+                        try:
+                            context_page.reload(
+                                wait_until="domcontentloaded", timeout=15000,
+                            )
+                            time.sleep(3)
+                        except Exception as reload_err:
+                            logger.warning("页面重载也失败: %s", reload_err)
+
+        raise RuntimeError(f"签名失败，已重试 {_SIGN_MAX_RETRIES} 次: {last_error}")
 
 
 @app.route("/refresh", methods=["POST"])
 def refresh_handler():
     """重建浏览器会话，获取新的 a1（用于会话被风控后恢复）"""
     global browser_context, context_page
-    try:
-        logger.info("正在重建浏览器会话...")
-        browser_context.close()
-        browser_context, context_page = get_context_page(playwright)
-        context_page.goto("https://www.xiaohongshu.com")
-        time.sleep(3)
-        context_page.wait_for_load_state("networkidle")
-        time.sleep(2)
-        _wait_for_sign_fn(context_page)
-        a1 = ""
-        for cookie in browser_context.cookies():
-            if cookie["name"] == "a1":
-                a1 = cookie["value"]
-        logger.info("浏览器会话已重建，新 a1: %s", a1[:16] if a1 else "无")
-        return jsonify({"ok": True, "a1": a1})
-    except Exception as e:
-        logger.exception("重建会话失败")
-        return jsonify({"ok": False, "error": str(e)}), 500
+    with _browser_lock:
+        try:
+            logger.info("正在重建浏览器会话...")
+            browser_context.close()
+            browser_context, context_page = get_context_page(playwright)
+            context_page.goto("https://www.xiaohongshu.com")
+            time.sleep(3)
+            context_page.wait_for_load_state("networkidle")
+            time.sleep(2)
+            _wait_for_sign_fn(context_page)
+            a1 = ""
+            for cookie in browser_context.cookies():
+                if cookie["name"] == "a1":
+                    a1 = cookie["value"]
+            logger.info("浏览器会话已重建，新 a1: %s", a1[:16] if a1 else "无")
+            return jsonify({"ok": True, "a1": a1})
+        except Exception as e:
+            logger.exception("重建会话失败")
+            return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/a1", methods=["GET"])
 def a1_handler():
     """返回当前浏览器的 a1 值，供 XhsClient 同步"""
-    for cookie in browser_context.cookies():
-        if cookie["name"] == "a1":
-            return jsonify({"a1": cookie["value"]})
-    return jsonify({"a1": ""}), 404
+    with _browser_lock:
+        for cookie in browser_context.cookies():
+            if cookie["name"] == "a1":
+                return jsonify({"a1": cookie["value"]})
+        return jsonify({"a1": ""}), 404
 
 
 @app.route("/sign", methods=["POST"])

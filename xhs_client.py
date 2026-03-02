@@ -3,6 +3,7 @@
 import atexit
 import logging
 import random
+import threading
 import time
 import httpx
 from xhs import XhsClient, SearchSortType, SearchNoteType
@@ -34,33 +35,35 @@ class HumanBehavior:
     def __init__(self):
         self._last_time = 0.0
         self._consecutive = 0
+        self._lock = threading.Lock()
 
     def delay(self):
-        """根据会话状态计算并执行延迟"""
-        now = time.time()
-        elapsed = now - self._last_time
+        """根据会话状态计算并执行延迟（线程安全）"""
+        with self._lock:
+            now = time.time()
+            elapsed = now - self._last_time
 
-        # 长时间空闲 → 新会话，重置疲劳计数
-        if elapsed > self.SESSION_RESET:
-            self._consecutive = 0
-        else:
-            self._consecutive += 1
+            # 长时间空闲 → 新会话，重置疲劳计数
+            if elapsed > self.SESSION_RESET:
+                self._consecutive = 0
+            else:
+                self._consecutive += 1
 
-        # 基础延迟 + 疲劳递增（有上限）
-        fatigue = min(self._consecutive * self.FATIGUE_STEP, self.FATIGUE_MAX)
-        delay = random.uniform(self.BASE_MIN + fatigue, self.BASE_MAX + fatigue)
+            # 基础延迟 + 疲劳递增（有上限）
+            fatigue = min(self._consecutive * self.FATIGUE_STEP, self.FATIGUE_MAX)
+            delay = random.uniform(self.BASE_MIN + fatigue, self.BASE_MAX + fatigue)
 
-        # 小概率"发呆"：模拟真人被其他事情打断
-        if random.random() < self.PAUSE_CHANCE:
-            delay += random.uniform(self.PAUSE_MIN, self.PAUSE_MAX)
-            logger.debug("模拟用户暂停 %.1f 秒", delay)
+            # 小概率"发呆"：模拟真人被其他事情打断
+            if random.random() < self.PAUSE_CHANCE:
+                delay += random.uniform(self.PAUSE_MIN, self.PAUSE_MAX)
+                logger.debug("模拟用户暂停 %.1f 秒", delay)
 
-        # 扣除已经过去的时间
-        wait = delay - elapsed
-        if wait > 0:
-            time.sleep(wait)
+            # 扣除已经过去的时间
+            wait = delay - elapsed
+            if wait > 0:
+                time.sleep(wait)
 
-        self._last_time = time.time()
+            self._last_time = time.time()
 
 
 _behavior = HumanBehavior()
@@ -107,22 +110,38 @@ NOTE_TYPE_MAP = {
 
 
 def _create_sign_function(sign_url: str):
-    """创建签名函数，通过 HTTP 调用签名服务（复用连接）"""
+    """创建签名函数，通过 HTTP 调用签名服务（复用连接，带重试）"""
     client = httpx.Client(timeout=config.REQUEST_TIMEOUT)
     atexit.register(client.close)
 
+    _MAX_RETRIES = 3
+    _RETRY_BACKOFF = [1.0, 2.0, 4.0]
+
     def sign(uri: str, data=None, a1: str = "", web_session: str = ""):
-        resp = client.post(sign_url, json={
-            "uri": uri,
-            "data": data,
-            "a1": a1,
-            "web_session": web_session,
-        })
-        resp.raise_for_status()
-        result = resp.json()
-        if "x-s" not in result or "x-t" not in result:
-            raise ValueError(f"签名服务返回格式异常: {result}")
-        return result
+        last_error = None
+        for attempt in range(_MAX_RETRIES):
+            try:
+                resp = client.post(sign_url, json={
+                    "uri": uri,
+                    "data": data,
+                    "a1": a1,
+                    "web_session": web_session,
+                })
+                resp.raise_for_status()
+                result = resp.json()
+                if "x-s" not in result or "x-t" not in result:
+                    raise ValueError(f"签名服务返回格式异常: {result}")
+                return result
+            except Exception as e:
+                last_error = e
+                if attempt < _MAX_RETRIES - 1:
+                    wait = _RETRY_BACKOFF[attempt]
+                    logger.warning(
+                        "签名请求失败 (第%d/%d次), %.1f秒后重试: %s",
+                        attempt + 1, _MAX_RETRIES, wait, e,
+                    )
+                    time.sleep(wait)
+        raise last_error
 
     return sign
 

@@ -7,10 +7,25 @@
 import logging
 import re
 import json
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
 from scrapling import Fetcher, StealthyFetcher
 
 logger = logging.getLogger(__name__)
+
+# 超时保护：防止浏览器爬取无限挂起
+_BROWSER_TIMEOUT = 30  # 秒
+_HTTP_TIMEOUT = 15  # 秒
+_scrape_pool = ThreadPoolExecutor(max_workers=2)
+
+
+def _with_timeout(fn, *args, timeout=_BROWSER_TIMEOUT, **kwargs):
+    """带超时保护的函数调用"""
+    future = _scrape_pool.submit(fn, *args, **kwargs)
+    try:
+        return future.result(timeout=timeout)
+    except FuturesTimeout:
+        raise TimeoutError(f"爬取超时（{timeout}秒）")
 
 
 def _extract_json_from_script(html: str, pattern: str) -> dict | None:
@@ -41,12 +56,11 @@ def scrape_note_by_url(url: str) -> dict:
         url = f"https://www.xiaohongshu.com/explore/{url}"
 
     logger.info("隐身浏览器爬取: %s", url)
-    response = StealthyFetcher.fetch(
-        url,
-        headless=True,
-        network_idle=True,
-        block_webrtc=True,
-        hide_canvas=True,
+    response = _with_timeout(
+        StealthyFetcher.fetch, url,
+        headless=True, network_idle=True,
+        block_webrtc=True, hide_canvas=True,
+        timeout=_BROWSER_TIMEOUT,
     )
 
     result = {"url": url, "status_code": response.status}
@@ -111,12 +125,11 @@ def scrape_search(keyword: str, page: int = 1) -> dict:
     url = f"https://www.xiaohongshu.com/search_result?keyword={keyword}&page={page}"
     logger.info("隐身浏览器搜索: %s (第%d页)", keyword, page)
 
-    response = StealthyFetcher.fetch(
-        url,
-        headless=True,
-        network_idle=True,
-        block_webrtc=True,
-        hide_canvas=True,
+    response = _with_timeout(
+        StealthyFetcher.fetch, url,
+        headless=True, network_idle=True,
+        block_webrtc=True, hide_canvas=True,
+        timeout=_BROWSER_TIMEOUT,
     )
 
     result = {"keyword": keyword, "page": page, "items": []}
@@ -170,17 +183,17 @@ def fetch_url(url: str, use_browser: bool = False) -> dict:
     logger.info("抓取 URL: %s (浏览器=%s)", url, use_browser)
 
     if use_browser:
-        response = StealthyFetcher.fetch(
-            url,
-            headless=True,
-            network_idle=True,
+        response = _with_timeout(
+            StealthyFetcher.fetch, url,
+            headless=True, network_idle=True,
             block_webrtc=True,
+            timeout=_BROWSER_TIMEOUT,
         )
     else:
-        response = Fetcher.get(
-            url,
-            stealthy_headers=True,
-            follow_redirects=True,
+        response = _with_timeout(
+            Fetcher.get, url,
+            stealthy_headers=True, follow_redirects=True,
+            timeout=_HTTP_TIMEOUT,
         )
 
     return {

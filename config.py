@@ -1,9 +1,20 @@
 """小红书 MCP Server 配置模块"""
 
 import os
+import sys
+import threading
 
-# 项目根目录
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# 项目根目录：frozen exe 时取 exe 所在目录，否则取脚本所在目录
+if getattr(sys, "frozen", False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# frozen exe 模式下，Playwright/Patchright 浏览器存放在 BASE_DIR/browsers
+if getattr(sys, "frozen", False):
+    _browsers_dir = os.path.join(BASE_DIR, "browsers")
+    os.makedirs(_browsers_dir, exist_ok=True)
+    os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", _browsers_dir)
 
 # Cookie 持久化文件
 COOKIE_FILE = os.path.join(BASE_DIR, "cookie.txt")
@@ -21,22 +32,27 @@ except ValueError:
     REQUEST_TIMEOUT = _DEFAULT_TIMEOUT
 
 
+_cookie_lock = threading.Lock()
+
+
 def load_cookie() -> str:
-    """加载 Cookie：优先环境变量，其次 cookie.txt"""
+    """加载 Cookie：优先环境变量，其次 cookie.txt（线程安全）"""
     cookie = os.environ.get("XHS_COOKIE", "")
     if cookie:
         return cookie
-    try:
-        with open(COOKIE_FILE, "r", encoding="utf-8") as f:
-            return f.read().strip()
-    except FileNotFoundError:
-        return ""
+    with _cookie_lock:
+        try:
+            with open(COOKIE_FILE, "r", encoding="utf-8") as f:
+                return f.read().strip()
+        except (FileNotFoundError, OSError):
+            return ""
 
 
 def save_cookie(cookie: str):
-    """保存 Cookie 到 cookie.txt"""
-    with open(COOKIE_FILE, "w", encoding="utf-8") as f:
-        f.write(cookie)
+    """保存 Cookie 到 cookie.txt（线程安全）"""
+    with _cookie_lock:
+        with open(COOKIE_FILE, "w", encoding="utf-8") as f:
+            f.write(cookie)
 
 
 # MCP HTTP 服务端口（用于 SSE / streamable-http 传输）

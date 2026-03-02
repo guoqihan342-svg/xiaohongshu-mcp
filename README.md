@@ -75,6 +75,15 @@ python start.py
 
 同时启动签名服务 + Web 管理面板 + MCP HTTP 服务，终端会显示所有服务地址。
 
+### 2.5 构建 EXE（免安装分发）
+
+```bash
+pip install pyinstaller
+python build.py
+```
+
+构建完成后 `dist/xiaohongshu-mcp/start.exe` 即可双击启动，无需安装 Python。
+
 ### 3. 接入 AI 助手
 
 **Claude Code（推荐）：**
@@ -121,10 +130,10 @@ openclaw mcp add --transport sse xiaohongshu http://127.0.0.1:18060/sse
 
 内置多层防护，降低被风控概率：
 
-**签名服务（Patchright 隐身浏览器）**
-- 使用 [Patchright](https://github.com/AresS31/patchright)（Playwright 隐身分支），内置反检测
-- 无需手动注入 stealth.js，比 playwright-stealth 更全面
-- 自动处理 canvas 指纹、WebRTC 泄露、navigator.webdriver 等检测点
+**签名服务（Playwright + Stealth）**
+- 使用 Playwright + playwright-stealth（经验证最稳定）
+- 并发锁保护浏览器操作，防止竞态条件
+- 签名函数 3 次重试 + 页面重载，签名 HTTP 客户端 3 次重试 + 指数退避
 
 **Scrapling 增强爬取**
 - [Scrapling](https://github.com/D4Vinci/Scrapling) 提供 TLS 指纹伪装（curl_cffi）和隐身浏览器
@@ -132,11 +141,12 @@ openclaw mcp add --transport sse xiaohongshu http://127.0.0.1:18060/sse
 - 浏览器级别：Patchright + browserforge + canvas noise + WebRTC 拦截
 - 当 API 被封（300011/300015 错误）时，自动降级为浏览器直接爬取
 
-**智能延迟系统（HumanBehavior）**
+**智能延迟系统（HumanBehavior，线程安全）**
 - 基础随机延迟 1~3 秒
 - 连续请求时延迟递增（模拟疲劳），每次 +0.3s，上限 +2.5s
 - 空闲 60 秒后自动重置（模拟新会话）
 - 8% 概率触发 5~12 秒长暂停（模拟"发呆"）
+- threading.Lock 保护并发访问
 
 **随机 User-Agent**
 - 7 个真实浏览器 UA（Chrome/Edge，Windows/macOS）
@@ -196,11 +206,13 @@ xiaohongshu-mcp/
 ├── scraper.py         # Scrapling 增强爬取模块（TLS 伪装 + 隐身浏览器）
 ├── config.py          # 配置管理 + Cookie 持久化
 ├── utils.py           # 共享验证函数
-├── sign_server.py     # Patchright 隐身签名服务
+├── sign_server.py     # Playwright + Stealth 签名服务（并发锁 + 重试）
 ├── web_panel.py       # Flask Web 管理面板
 ├── login.py           # 浏览器扫码登录
-├── start.py           # 一键启动脚本
-├── test_all.py        # 测试套件（93 项测试）
+├── start.py           # 一键启动 + EXE 服务调度
+├── build.py           # EXE 构建脚本
+├── xiaohongshu.spec   # PyInstaller 打包配置
+├── test_all.py        # 测试套件（102 项测试）
 ├── templates/
 │   └── index.html     # 前端页面（暗色模式 + 搜索历史 + 隐身搜索）
 ├── pyproject.toml     # 项目依赖
@@ -213,7 +225,7 @@ xiaohongshu-mcp/
 python test_all.py
 ```
 
-覆盖模块导入、配置解析、参数验证、延迟系统、UA 轮换、API 初始化、Scrapling 模块、Web 路由、MCP 工具注册、文件语法、依赖完整性等 93 项检查。
+覆盖模块导入、配置解析、参数验证、延迟系统、UA 轮换、API 初始化、Scrapling 模块、Web 路由、MCP 工具注册、线程安全、EXE 打包支持、文件语法、依赖完整性等 102 项检查。
 
 ## 致谢
 

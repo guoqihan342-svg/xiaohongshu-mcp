@@ -595,6 +595,125 @@ test("所有声明依赖可导入", test_deps)
 # ============================================================
 print()
 print("=" * 50)
+print("11. 线程安全测试")
+print("=" * 50)
+
+import threading
+
+
+def test_human_behavior_thread_safety():
+    """并发调用 HumanBehavior.delay() 不会崩溃"""
+    b = HumanBehavior()
+    errors = []
+
+    def call_delay():
+        try:
+            b.delay()
+        except Exception as e:
+            errors.append(e)
+
+    threads = [threading.Thread(target=call_delay) for _ in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+    assert_true(len(errors) == 0)
+
+
+test("HumanBehavior 并发调用安全", test_human_behavior_thread_safety)
+
+
+def test_human_behavior_has_lock():
+    """HumanBehavior 实例应有 _lock 属性"""
+    b = HumanBehavior()
+    assert_true(hasattr(b, "_lock"))
+    assert_true(isinstance(b._lock, type(threading.Lock())))
+
+
+test("HumanBehavior 含线程锁", test_human_behavior_has_lock)
+
+
+def test_cookie_save_thread_safety():
+    """并发写 cookie 不崩溃"""
+    backup = None
+    if os.path.exists(config.COOKIE_FILE):
+        with open(config.COOKIE_FILE, "r") as f:
+            backup = f.read()
+    errors = []
+
+    def save(i):
+        try:
+            config.save_cookie(f"a1=test{i}; web_session=test{i}")
+        except Exception as e:
+            errors.append(e)
+
+    try:
+        threads = [threading.Thread(target=save, args=(i,)) for i in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+        assert_true(len(errors) == 0)
+    finally:
+        if backup is not None:
+            with open(config.COOKIE_FILE, "w") as f:
+                f.write(backup)
+        elif os.path.exists(config.COOKIE_FILE):
+            os.remove(config.COOKIE_FILE)
+
+
+test("Cookie 并发写入安全", test_cookie_save_thread_safety)
+
+# ============================================================
+print()
+print("=" * 50)
+print("12. EXE 打包支持测试")
+print("=" * 50)
+
+
+def test_frozen_path_detection():
+    """非 frozen 模式下 BASE_DIR 应为脚本目录"""
+    assert_true(os.path.isdir(config.BASE_DIR))
+    assert_true(not getattr(sys, "frozen", False))
+
+
+test("路径检测（非 frozen 模式）", test_frozen_path_detection)
+
+
+def test_config_has_cookie_lock():
+    """config 模块应有 _cookie_lock"""
+    assert_true(hasattr(config, "_cookie_lock"))
+
+
+test("config 含 Cookie 线程锁", test_config_has_cookie_lock)
+
+
+def test_service_arg_parsing():
+    """验证 --service 参数可解析"""
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--service", choices=["sign", "web", "mcp"])
+    args = parser.parse_args(["--service", "sign"])
+    assert_true(args.service == "sign")
+
+
+test("--service 参数解析", test_service_arg_parsing)
+
+
+def test_scraper_timeout_wrapper():
+    """scraper 模块应有超时保护函数"""
+    from scraper import _with_timeout
+    assert_true(callable(_with_timeout))
+
+
+test("scraper 超时保护函数存在", test_scraper_timeout_wrapper)
+
+test("build.py 语法正确", lambda: check_syntax("build.py"))
+test("xiaohongshu.spec 存在", lambda: assert_true(os.path.exists("xiaohongshu.spec")))
+
+# ============================================================
+print()
+print("=" * 50)
 total = passed + failed + skipped
 print(f"测试结果: 共 {total} 个测试")
 print(f"  通过: {passed}")

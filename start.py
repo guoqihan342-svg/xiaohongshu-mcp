@@ -1,4 +1,9 @@
-"""一键启动 — 签名服务 + Web 管理面板 + MCP HTTP 服务"""
+"""一键启动 — 签名服务 + Web 管理面板 + MCP HTTP 服务
+
+支持两种运行模式：
+- 编排模式（默认）：启动所有服务的子进程
+- 服务模式（--service）：直接运行指定服务（供 EXE 内部调度使用）
+"""
 
 import os
 import sys
@@ -9,9 +14,13 @@ import argparse
 
 import httpx
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# frozen exe 时取 exe 所在目录
+if getattr(sys, "frozen", False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 SIGN_URL = os.environ.get("XHS_SIGN_URL", "http://localhost:5555/sign")
-PYTHON = sys.executable
 
 sign_proc = None
 web_proc = None
@@ -66,10 +75,56 @@ def wait_for_http(url, timeout=30):
     return False
 
 
+def _spawn(service_args: list[str]) -> subprocess.Popen:
+    """启动子进程：frozen 模式用 exe --service，否则用 python 脚本"""
+    exe = sys.executable
+    if getattr(sys, "frozen", False):
+        cmd = [exe] + service_args
+    else:
+        cmd = [exe] + service_args
+    return subprocess.Popen(cmd, cwd=BASE_DIR)
+
+
+def run_service(service_name: str, extra_args: list[str]):
+    """直接运行指定服务（--service 模式，每个服务在独立进程中）"""
+    # 确保模块搜索路径包含项目目录
+    if BASE_DIR not in sys.path:
+        sys.path.insert(0, BASE_DIR)
+
+    if service_name == "sign":
+        import sign_server
+        sign_server.app.run(host="127.0.0.1", port=5555)
+
+    elif service_name == "web":
+        import web_panel
+        web_panel.app.run(host="127.0.0.1", port=8080, debug=False)
+
+    elif service_name == "mcp":
+        p = argparse.ArgumentParser()
+        p.add_argument("--transport", default="sse")
+        p.add_argument("--port", type=int, default=18060)
+        p.add_argument("--host", default="127.0.0.1")
+        mcp_args = p.parse_args(extra_args)
+
+        import server as mcp_server
+        if mcp_args.transport in ("sse", "streamable-http"):
+            mcp_server.mcp.settings.host = mcp_args.host
+            mcp_server.mcp.settings.port = mcp_args.port
+        mcp_server.mcp.run(transport=mcp_args.transport)
+
+    else:
+        print(f"未知服务: {service_name}")
+        sys.exit(1)
+
+
 def main():
     global sign_proc, web_proc, mcp_proc
 
     parser = argparse.ArgumentParser(description="小红书一键启动")
+    parser.add_argument(
+        "--service", choices=["sign", "web", "mcp"],
+        help="直接运行指定服务（内部调度用）",
+    )
     parser.add_argument(
         "--no-mcp", action="store_true",
         help="不启动 MCP HTTP 服务",
@@ -82,8 +137,14 @@ def main():
         "--mcp-port", type=int, default=18060,
         help="MCP HTTP 服务端口（默认 18060）",
     )
-    args = parser.parse_args()
+    args, remaining = parser.parse_known_args()
 
+    # --service 模式：直接运行指定服务
+    if args.service:
+        run_service(args.service, remaining)
+        return
+
+    # ===== 编排模式：启动所有子进程 =====
     signal.signal(signal.SIGINT, cleanup)
     signal.signal(signal.SIGTERM, cleanup)
 
@@ -101,10 +162,10 @@ def main():
 
     if not sign_already_running:
         print("正在启动签名服务...")
-        sign_proc = subprocess.Popen(
-            [PYTHON, os.path.join(BASE_DIR, "sign_server.py")],
-            cwd=BASE_DIR,
-        )
+        if getattr(sys, "frozen", False):
+            sign_proc = _spawn(["--service", "sign"])
+        else:
+            sign_proc = _spawn([os.path.join(BASE_DIR, "sign_server.py")])
         print("等待签名服务就绪...")
         if wait_for_sign_service():
             print("签名服务已就绪")
@@ -113,22 +174,26 @@ def main():
 
     # 2. Web 管理面板
     print("正在启动 Web 管理面板...")
-    web_proc = subprocess.Popen(
-        [PYTHON, os.path.join(BASE_DIR, "web_panel.py")],
-        cwd=BASE_DIR,
-    )
+    if getattr(sys, "frozen", False):
+        web_proc = _spawn(["--service", "web"])
+    else:
+        web_proc = _spawn([os.path.join(BASE_DIR, "web_panel.py")])
 
     # 3. MCP HTTP 服务（用于 OpenClaw 等外部对接）
     if not args.no_mcp:
         print(f"正在启动 MCP 服务（{args.mcp_transport}, 端口 {args.mcp_port}）...")
-        mcp_proc = subprocess.Popen(
-            [
-                PYTHON, os.path.join(BASE_DIR, "server.py"),
+        if getattr(sys, "frozen", False):
+            mcp_proc = _spawn([
+                "--service", "mcp",
                 "--transport", args.mcp_transport,
                 "--port", str(args.mcp_port),
-            ],
-            cwd=BASE_DIR,
-        )
+            ])
+        else:
+            mcp_proc = _spawn([
+                os.path.join(BASE_DIR, "server.py"),
+                "--transport", args.mcp_transport,
+                "--port", str(args.mcp_port),
+            ])
 
     mcp_url = f"http://127.0.0.1:{args.mcp_port}"
 
@@ -155,7 +220,7 @@ def main():
     # 等待子进程
     try:
         while True:
-            if web_proc.poll() is not None:
+            if web_proc and web_proc.poll() is not None:
                 print("Web 面板已退出")
                 break
             if sign_proc and sign_proc.poll() is not None:

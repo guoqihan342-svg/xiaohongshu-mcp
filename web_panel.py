@@ -21,7 +21,10 @@ import config
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = Flask(__name__)
+app = Flask(
+    __name__,
+    template_folder=os.path.join(config.BASE_DIR, "templates"),
+)
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
 
 xhs = XhsAPI()
