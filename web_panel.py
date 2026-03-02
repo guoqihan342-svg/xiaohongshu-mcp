@@ -39,8 +39,8 @@ def api_handler(func):
             return jsonify({"error": "参数错误", "message": str(e)}), 400
         except IPBlockError:
             return jsonify({"error": "IP 被限流", "message": "请求过于频繁，请稍后再试"}), 429
-        except SignError:
-            return jsonify({"error": "签名失败", "message": "请检查签名服务是否正常运行"}), 502
+        except SignError as e:
+            return jsonify({"error": "签名失败", "message": str(e) or "请检查签名服务是否正常运行"}), 502
         except NeedVerifyError:
             return jsonify({"error": "需要验证码", "message": "触发了人机验证，请稍后再试"}), 403
         except DataFetchError as e:
@@ -174,6 +174,28 @@ def api_create_video():
         if cpath:
             try: os.remove(cpath)
             except OSError: pass
+
+
+@app.route("/api/refresh-sign", methods=["POST"])
+@api_handler
+def api_refresh_sign():
+    """重建签名服务浏览器会话并同步新 a1"""
+    refresh_url = config.XHS_SIGN_URL.rsplit("/", 1)[0] + "/refresh"
+    resp = httpx.post(refresh_url, timeout=60)
+    resp.raise_for_status()
+    data = resp.json()
+    if not data.get("ok"):
+        raise RuntimeError(data.get("error", "重建失败"))
+    # 同步新 a1
+    a1 = data.get("a1", "")
+    if a1:
+        cookie_dict = xhs._client.cookie_dict
+        old_a1 = cookie_dict.get("a1", "")
+        cookie_dict["a1"] = a1
+        if old_a1 and old_a1 != a1 and "web_session" in cookie_dict:
+            del cookie_dict["web_session"]
+        xhs._client.cookie = "; ".join(f"{k}={v}" for k, v in cookie_dict.items())
+    return jsonify({"message": "签名服务已刷新，请重新扫码登录" if a1 else "签名服务已刷新"})
 
 
 @app.route("/api/qrcode/create", methods=["POST"])

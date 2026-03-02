@@ -157,11 +157,16 @@ class XhsAPI:
             timeout=config.REQUEST_TIMEOUT,
             user_agent=ua,
         )
-        # 同步签名服务的 a1，确保签名一致
+        # 始终同步签名服务的 a1（签名基于签名服务浏览器的 a1 生成）
         a1 = _sync_a1_from_sign_server(config.XHS_SIGN_URL)
         if a1:
             cookie_dict = self._client.cookie_dict
+            old_a1 = cookie_dict.get("a1", "")
             cookie_dict["a1"] = a1
+            # 如果 a1 变了且有 web_session，该 session 已失效
+            if old_a1 and old_a1 != a1 and "web_session" in cookie_dict:
+                logger.warning("签名服务 a1 与 Cookie 不匹配，登录态已失效，需重新扫码")
+                del cookie_dict["web_session"]
             self._client.cookie = "; ".join(
                 f"{k}={v}" for k, v in cookie_dict.items()
             )

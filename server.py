@@ -30,8 +30,8 @@ def _tool_error_handler(func):
             return _err("参数错误", str(e))
         except IPBlockError:
             return _err("IP 被限流", "请求过于频繁，请稍后再试")
-        except SignError:
-            return _err("签名失败", "请检查签名服务是否正常运行")
+        except SignError as e:
+            return _err("签名失败", str(e) or "请检查签名服务是否正常运行")
         except NeedVerifyError:
             return _err("需要验证码", "触发了人机验证，请稍后再试或更换 Cookie")
         except DataFetchError as e:

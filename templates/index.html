@@ -131,7 +131,11 @@
                 <div class="flex justify-between"><span class="text-gray-500">签名服务</span><span id="st-sign">--</span></div>
                 <div class="flex justify-between"><span class="text-gray-500">登录状态</span><span id="st-cookie">--</span></div>
             </div>
-            <button onclick="checkStatus()" class="mt-3 text-xs text-red-500 hover:text-red-600">刷新</button>
+            <div class="flex gap-3 mt-3">
+                <button onclick="checkStatus()" class="text-xs text-red-500 hover:text-red-600">刷新状态</button>
+                <button onclick="refreshSign()" id="refresh-btn" class="text-xs text-orange-500 hover:text-orange-600">重建签名会话</button>
+            </div>
+            <div id="refresh-msg" class="hidden text-xs mt-2"></div>
         </div>
         <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-5">
             <h2 class="font-semibold mb-3">扫码登录</h2>
@@ -274,6 +278,23 @@ async function doPublish(){
         $('p-msg').className='text-sm mt-2 text-green-600';$('p-msg').textContent='发布成功！';$('p-msg').classList.remove('hidden');
     }catch(e){toast(e.message,1);$('p-msg').className='text-sm mt-2 text-red-500';$('p-msg').textContent=e.message;$('p-msg').classList.remove('hidden')}
     finally{btn.disabled=false;btn.textContent='发布'}}
+
+// ===== 刷新签名服务 =====
+async function refreshSign(){
+    const btn=$('refresh-btn');btn.disabled=true;btn.textContent='重建中...';
+    $('refresh-msg').classList.add('hidden');
+    try{
+        const d=await api('/api/refresh-sign',{method:'POST'});
+        toast(d.message);
+        $('refresh-msg').className='text-xs mt-2 text-green-600';
+        $('refresh-msg').textContent=d.message;$('refresh-msg').classList.remove('hidden');
+        checkStatus();
+    }catch(e){
+        toast(e.message,1);
+        $('refresh-msg').className='text-xs mt-2 text-red-500';
+        $('refresh-msg').textContent=e.message;$('refresh-msg').classList.remove('hidden');
+    }finally{btn.disabled=false;btn.textContent='重建签名会话'}
+}
 
 // ===== 扫码登录 =====
 let qrTimer=null;

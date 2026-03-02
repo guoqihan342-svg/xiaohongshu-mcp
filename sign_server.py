@@ -82,6 +82,33 @@ def sign(uri, data, a1, web_session):
     }
 
 
+@app.route("/refresh", methods=["POST"])
+def refresh_handler():
+    """重建浏览器会话，获取新的 a1（用于会话被风控后恢复）"""
+    global browser_context, context_page
+    try:
+        logger.info("正在重建浏览器会话...")
+        browser_context.close()
+        browser_context, context_page = get_context_page(playwright)
+        context_page.goto("https://www.xiaohongshu.com")
+        time.sleep(3)
+        context_page.wait_for_load_state("networkidle")
+        time.sleep(2)
+        for i in range(10):
+            if context_page.evaluate("() => typeof window._webmsxyw === 'function'"):
+                break
+            time.sleep(2)
+        a1 = ""
+        for cookie in browser_context.cookies():
+            if cookie["name"] == "a1":
+                a1 = cookie["value"]
+        logger.info("浏览器会话已重建，新 a1: %s", a1[:16] if a1 else "无")
+        return jsonify({"ok": True, "a1": a1})
+    except Exception as e:
+        logger.exception("重建会话失败")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @app.route("/a1", methods=["GET"])
 def a1_handler():
     """返回当前浏览器的 a1 值，供 XhsClient 同步"""
