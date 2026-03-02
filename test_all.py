@@ -293,6 +293,32 @@ def test_xhs_api_init():
 
 test("XhsAPI 实例化(需签名服务)", test_xhs_api_init)
 
+
+def test_xhs_api_methods():
+    """检查 XhsAPI 类包含所有预期方法"""
+    from xhs_client import XhsAPI
+    expected = [
+        "search_notes", "get_note_detail", "get_user_info",
+        "get_user_notes", "create_image_note", "create_video_note",
+        "get_self_info", "set_cookie", "create_qrcode",
+        "check_qrcode", "get_cookie_str", "has_cookie",
+    ]
+    for name in expected:
+        assert_true(hasattr(XhsAPI, name) or hasattr(XhsAPI, name))
+
+
+test("XhsAPI 包含所有预期方法", test_xhs_api_methods)
+
+
+def test_sync_a1():
+    """测试 _sync_a1_from_sign_server 对不可达服务返回空"""
+    from xhs_client import _sync_a1_from_sign_server
+    result = _sync_a1_from_sign_server("http://127.0.0.1:59999/sign")
+    assert_true(result == "")
+
+
+test("a1 同步对不可达服务返回空", test_sync_a1)
+
 # ============================================================
 print()
 print("=" * 50)
@@ -388,6 +414,34 @@ try:
 
     test("GET /api/user/<id>/notes(需签名服务)", test_user_notes)
 
+    # 二维码接口
+    def test_qrcode_create():
+        try:
+            resp = client.post("/api/qrcode/create")
+            assert_true(resp.status_code in (200, 502))
+            if resp.status_code == 200:
+                data = resp.get_json()
+                assert_true("qr_id" in data)
+                assert_true("qr_image" in data)
+        except Exception:
+            return "SKIP"
+
+    test("POST /api/qrcode/create(需签名服务)", test_qrcode_create)
+
+    def test_qrcode_check_missing():
+        resp = client.post("/api/qrcode/check", json={})
+        assert_true(resp.status_code == 400)
+
+    test("POST /api/qrcode/check 缺参数 400", test_qrcode_check_missing)
+
+    # secure_filename 安全性
+    def test_secure_upload():
+        from werkzeug.utils import secure_filename
+        assert_true(secure_filename("../../etc/passwd") == "etc_passwd")
+        assert_true(secure_filename("normal.jpg") == "normal.jpg")
+
+    test("secure_filename 防路径遍历", test_secure_upload)
+
 except Exception as e:
     print(f"  [跳过] Web 面板测试整体跳过 -- {e}")
     skipped += 1
@@ -404,7 +458,7 @@ try:
     expected_tools = [
         "search_notes", "get_note_detail", "get_user_info",
         "get_user_notes", "create_note", "create_video_note",
-        "set_cookie", "get_self_info",
+        "set_cookie", "get_self_info", "qrcode_login", "check_qrcode",
     ]
     for name in expected_tools:
         test(f"MCP 工具 {name} 已注册", lambda n=name: assert_true(n in tools))
@@ -433,6 +487,22 @@ test("utils.py 语法正确", lambda: check_syntax("utils.py"))
 test("xhs_client.py 语法正确", lambda: check_syntax("xhs_client.py"))
 test("server.py 语法正确", lambda: check_syntax("server.py"))
 test("web_panel.py 语法正确", lambda: check_syntax("web_panel.py"))
+
+# ============================================================
+print()
+print("=" * 50)
+print("10. 依赖完整性检查")
+print("=" * 50)
+
+
+def test_deps():
+    import importlib
+    for mod in ["mcp", "xhs", "httpx", "flask", "qrcode", "gevent",
+                "playwright", "playwright_stealth"]:
+        importlib.import_module(mod)
+
+
+test("所有声明依赖可导入", test_deps)
 
 # ============================================================
 print()

@@ -204,6 +204,47 @@ def get_self_info(ctx: Context = None) -> str:
     return _ok(_xhs(ctx).get_self_info())
 
 
+@mcp.tool()
+@_tool_error_handler
+def qrcode_login(ctx: Context = None) -> str:
+    """生成小红书扫码登录二维码。返回 qr_id 和 code 用于后续检查扫码状态。
+    用户需用小红书 APP 扫描返回的链接对应的二维码,然后调用 check_qrcode 检查登录状态。
+
+    Returns:
+        包含 qr_id、code 和 url 的 JSON
+    """
+    result = _xhs(ctx).create_qrcode()
+    url = result.get("url", "")
+    if not url:
+        return _err("二维码生成失败", "未获取到二维码链接")
+    return _ok(result)
+
+
+@mcp.tool()
+@_tool_error_handler
+def check_qrcode(qr_id: str, code: str, ctx: Context = None) -> str:
+    """检查扫码登录状态。配合 qrcode_login 使用,轮询直到登录成功。
+
+    Args:
+        qr_id: qrcode_login 返回的二维码 ID
+        code: qrcode_login 返回的验证码
+    """
+    xhs = _xhs(ctx)
+    result = xhs.check_qrcode(qr_id=qr_id, code=code)
+    code_status = result.get("code_status", -1)
+    if code_status == 2:
+        cookie_str = xhs.get_cookie_str()
+        if cookie_str and "web_session" in cookie_str:
+            config.save_cookie(cookie_str)
+            return _ok({"status": "ok", "message": "登录成功,Cookie 已保存"})
+    status_map = {0: "等待扫码", 1: "已扫码,请在手机上确认"}
+    return _ok({
+        "status": "waiting",
+        "code_status": code_status,
+        "message": status_map.get(code_status, f"未知状态: {code_status}"),
+    })
+
+
 if __name__ == "__main__":
     import argparse
 

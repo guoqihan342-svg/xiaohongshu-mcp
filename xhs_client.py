@@ -127,6 +127,21 @@ def _create_sign_function(sign_url: str):
     return sign
 
 
+def _sync_a1_from_sign_server(sign_url: str) -> str:
+    """从签名服务获取浏览器的 a1 值，确保签名一致"""
+    a1_url = sign_url.rsplit("/", 1)[0] + "/a1"
+    try:
+        resp = httpx.get(a1_url, timeout=5)
+        if resp.status_code == 200:
+            a1 = resp.json().get("a1", "")
+            if a1:
+                logger.info("已从签名服务同步 a1: %s...", a1[:16])
+                return a1
+    except Exception as e:
+        logger.warning("无法从签名服务获取 a1: %s", e)
+    return ""
+
+
 class XhsAPI:
     """小红书 API 客户端封装"""
 
@@ -134,12 +149,22 @@ class XhsAPI:
         sign_fn = _create_sign_function(config.XHS_SIGN_URL)
         ua = _random_ua()
         logger.info("使用 User-Agent: %s", ua[:50] + "...")
+        # 构建初始 Cookie：优先用户 Cookie，否则同步签名服务的 a1
+        init_cookie = config.XHS_COOKIE or None
         self._client = XhsClient(
-            cookie=config.XHS_COOKIE or None,
+            cookie=init_cookie,
             sign=sign_fn,
             timeout=config.REQUEST_TIMEOUT,
             user_agent=ua,
         )
+        # 同步签名服务的 a1，确保签名一致
+        a1 = _sync_a1_from_sign_server(config.XHS_SIGN_URL)
+        if a1:
+            cookie_dict = self._client.cookie_dict
+            cookie_dict["a1"] = a1
+            self._client.cookie = "; ".join(
+                f"{k}={v}" for k, v in cookie_dict.items()
+            )
 
     @property
     def has_cookie(self) -> bool:
@@ -228,3 +253,15 @@ class XhsAPI:
         if not self.has_cookie:
             raise RuntimeError("获取自身信息需要先设置 Cookie 登录")
         return self._client.get_self_info()
+
+    def create_qrcode(self) -> dict:
+        """创建扫码登录二维码，返回 qr_id、code、url"""
+        return self._client.get_qrcode()
+
+    def check_qrcode(self, qr_id: str, code: str) -> dict:
+        """检查二维码扫描状态"""
+        return self._client.check_qrcode(qr_id=qr_id, code=code)
+
+    def get_cookie_str(self) -> str:
+        """获取当前客户端的完整 Cookie 字符串"""
+        return self._client.cookie or ""

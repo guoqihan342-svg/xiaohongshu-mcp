@@ -82,6 +82,15 @@ def sign(uri, data, a1, web_session):
     }
 
 
+@app.route("/a1", methods=["GET"])
+def a1_handler():
+    """返回当前浏览器的 a1 值，供 XhsClient 同步"""
+    for cookie in browser_context.cookies():
+        if cookie["name"] == "a1":
+            return jsonify({"a1": cookie["value"]})
+    return jsonify({"a1": ""}), 404
+
+
 @app.route("/sign", methods=["POST"])
 def sign_handler():
     json_data = request.get_json(silent=True)

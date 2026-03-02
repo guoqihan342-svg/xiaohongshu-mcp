@@ -134,8 +134,21 @@
             <button onclick="checkStatus()" class="mt-3 text-xs text-red-500 hover:text-red-600">刷新</button>
         </div>
         <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-5">
+            <h2 class="font-semibold mb-3">扫码登录</h2>
+            <p class="text-xs text-gray-400 mb-3">用小红书 APP 扫描二维码，免手动粘贴 Cookie。</p>
+            <div id="qr-area" class="text-center">
+                <button onclick="startQrLogin()" id="qr-btn" class="bg-red-500 hover:bg-red-600 text-white px-6 py-2.5 rounded-lg text-sm font-medium">生成二维码</button>
+            </div>
+            <div id="qr-display" class="hidden text-center mt-4 fade-in">
+                <img id="qr-img" class="mx-auto rounded-xl shadow-md" style="width:220px;height:220px" alt="二维码">
+                <p id="qr-status" class="mt-3 text-sm text-gray-500">请用小红书 APP 扫描二维码</p>
+                <button onclick="startQrLogin()" class="mt-2 text-xs text-red-500 hover:text-red-600">刷新二维码</button>
+            </div>
+            <div id="qr-msg" class="hidden text-sm mt-3 text-center"></div>
+        </div>
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-5">
             <h2 class="font-semibold mb-3">Cookie 管理</h2>
-            <p class="text-xs text-gray-400 mb-2">从浏览器 F12 复制 Cookie，需包含 a1 和 web_session。</p>
+            <p class="text-xs text-gray-400 mb-2">或者从浏览器 F12 复制 Cookie，需包含 a1 和 web_session。</p>
             <textarea id="ck-in" rows="3" placeholder="粘贴 Cookie..." class="w-full border border-gray-200 dark:border-gray-600 dark:bg-gray-700 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-red-400 resize-y"></textarea>
             <button onclick="setCookie()" class="mt-2 bg-red-500 hover:bg-red-600 text-white px-5 py-2 rounded-lg text-sm font-medium">设置</button>
             <div id="ck-msg" class="hidden text-sm mt-2"></div>
@@ -261,6 +274,41 @@ async function doPublish(){
         $('p-msg').className='text-sm mt-2 text-green-600';$('p-msg').textContent='发布成功！';$('p-msg').classList.remove('hidden');
     }catch(e){toast(e.message,1);$('p-msg').className='text-sm mt-2 text-red-500';$('p-msg').textContent=e.message;$('p-msg').classList.remove('hidden')}
     finally{btn.disabled=false;btn.textContent='发布'}}
+
+// ===== 扫码登录 =====
+let qrTimer=null;
+async function startQrLogin(){
+    if(qrTimer){clearInterval(qrTimer);qrTimer=null}
+    $('qr-btn').disabled=true;$('qr-btn').textContent='生成中...';
+    $('qr-msg').classList.add('hidden');
+    try{
+        const d=await api('/api/qrcode/create',{method:'POST'});
+        $('qr-img').src=d.qr_image;
+        $('qr-display').classList.remove('hidden');
+        $('qr-status').textContent='请用小红书 APP 扫描二维码';
+        $('qr-status').className='mt-3 text-sm text-gray-500';
+        // 轮询检查状态，每 2 秒一次，最多 2 分钟
+        let count=0;
+        qrTimer=setInterval(async()=>{
+            count++;
+            if(count>60){clearInterval(qrTimer);qrTimer=null;$('qr-status').textContent='二维码已过期，请刷新';$('qr-status').className='mt-3 text-sm text-yellow-500';return}
+            try{
+                const r=await api('/api/qrcode/check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({qr_id:d.qr_id,code:d.code})});
+                if(r.status==='ok'){
+                    clearInterval(qrTimer);qrTimer=null;
+                    $('qr-status').textContent='登录成功！';
+                    $('qr-status').className='mt-3 text-sm text-green-600 font-medium';
+                    $('qr-msg').className='text-sm mt-3 text-center text-green-600';$('qr-msg').textContent='已登录，Cookie 已自动保存';$('qr-msg').classList.remove('hidden');
+                    toast('扫码登录成功');checkStatus();loadSelf();
+                }else if(r.code_status===1){
+                    $('qr-status').textContent='已扫码，请在手机上确认...';
+                    $('qr-status').className='mt-3 text-sm text-blue-500';
+                }
+            }catch{}
+        },2000);
+    }catch(e){toast(e.message,1);$('qr-msg').className='text-sm mt-3 text-center text-red-500';$('qr-msg').textContent=e.message;$('qr-msg').classList.remove('hidden')}
+    finally{$('qr-btn').disabled=false;$('qr-btn').textContent='生成二维码'}
+}
 
 // ===== 设置 =====
 async function checkStatus(){try{const d=await api('/api/status');

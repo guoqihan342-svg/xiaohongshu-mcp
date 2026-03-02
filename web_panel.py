@@ -1,12 +1,16 @@
 """小红书 Web 管理面板"""
 
+import base64
+import io
 import logging
 import os
 import tempfile
 import functools
 
 import httpx
+import qrcode
 from flask import Flask, jsonify, request, render_template
+from werkzeug.utils import secure_filename
 from xhs.exception import DataFetchError, IPBlockError, SignError, NeedVerifyError
 
 from xhs_client import XhsAPI
@@ -130,7 +134,7 @@ def api_create_note():
     paths = []
     try:
         for f in files:
-            p = os.path.join(UPLOAD_DIR, f.filename)
+            p = os.path.join(UPLOAD_DIR, secure_filename(f.filename))
             f.save(p)
             paths.append(p)
         return jsonify(xhs.create_image_note(
@@ -152,13 +156,13 @@ def api_create_video():
     video = request.files.get("video")
     if not video:
         raise ValueError("请上传视频文件")
-    vpath = os.path.join(UPLOAD_DIR, video.filename)
+    vpath = os.path.join(UPLOAD_DIR, secure_filename(video.filename))
     cpath = None
     try:
         video.save(vpath)
         cover = request.files.get("cover")
         if cover:
-            cpath = os.path.join(UPLOAD_DIR, cover.filename)
+            cpath = os.path.join(UPLOAD_DIR, secure_filename(cover.filename))
             cover.save(cpath)
         return jsonify(xhs.create_video_note(
             title=title, desc=request.form.get("desc", ""),
@@ -170,6 +174,53 @@ def api_create_video():
         if cpath:
             try: os.remove(cpath)
             except OSError: pass
+
+
+@app.route("/api/qrcode/create", methods=["POST"])
+@api_handler
+def api_qrcode_create():
+    """生成扫码登录二维码"""
+    result = xhs.create_qrcode()
+    qr_url = result.get("url", "")
+    if not qr_url:
+        raise RuntimeError("获取二维码链接失败")
+    # 生成二维码图片 → base64
+    img = qrcode.make(qr_url, box_size=8, border=2)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    return jsonify({
+        "qr_id": result.get("qr_id", ""),
+        "code": result.get("code", ""),
+        "qr_image": f"data:image/png;base64,{b64}",
+    })
+
+
+@app.route("/api/qrcode/check", methods=["POST"])
+@api_handler
+def api_qrcode_check():
+    """轮询检查二维码扫描状态"""
+    data = request.get_json(silent=True)
+    if not data or "qr_id" not in data or "code" not in data:
+        raise ValueError("缺少 qr_id 或 code 参数")
+    result = xhs.check_qrcode(qr_id=data["qr_id"], code=data["code"])
+    code_status = result.get("code_status", -1)
+    # code_status: 0=未扫描, 1=已扫描待确认, 2=已确认登录
+    if code_status == 2:
+        # 登录成功，提取并保存 Cookie
+        cookie_str = xhs.get_cookie_str()
+        if cookie_str and "web_session" in cookie_str:
+            config.save_cookie(cookie_str)
+            return jsonify({"status": "ok", "message": "登录成功"})
+        else:
+            return jsonify({"status": "waiting", "code_status": code_status,
+                            "message": "已确认但 Cookie 未就绪，请稍等"})
+    status_map = {0: "等待扫码", 1: "已扫码，请在手机上确认"}
+    return jsonify({
+        "status": "waiting",
+        "code_status": code_status,
+        "message": status_map.get(code_status, f"未知状态: {code_status}"),
+    })
 
 
 if __name__ == "__main__":
