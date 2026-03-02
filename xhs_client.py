@@ -264,8 +264,22 @@ class XhsAPI:
         return self._client.get_qrcode()
 
     def check_qrcode(self, qr_id: str, code: str) -> dict:
-        """检查二维码扫描状态"""
-        return self._client.check_qrcode(qr_id=qr_id, code=code)
+        """检查二维码扫描状态，登录成功后自动激活并保存 Cookie"""
+        result = self._client.check_qrcode(qr_id=qr_id, code=code)
+        code_status = result.get("code_status", -1)
+        if code_status == 2:
+            # 登录成功，激活会话
+            try:
+                self._client.activate()
+                logger.info("登录会话已激活")
+            except Exception as e:
+                logger.warning("激活会话失败（可忽略）: %s", e)
+            # 读取并保存 Cookie（session 中已包含 web_session）
+            cookie_str = self._client.cookie or ""
+            if cookie_str and "web_session" in cookie_str:
+                config.save_cookie(cookie_str)
+                logger.info("扫码登录成功，Cookie 已保存")
+        return result
 
     def get_cookie_str(self) -> str:
         """获取当前客户端的完整 Cookie 字符串"""

@@ -225,14 +225,12 @@ def api_qrcode_check():
     data = request.get_json(silent=True)
     if not data or "qr_id" not in data or "code" not in data:
         raise ValueError("缺少 qr_id 或 code 参数")
+    # xhs_client.check_qrcode 会自动激活会话并保存 Cookie
     result = xhs.check_qrcode(qr_id=data["qr_id"], code=data["code"])
     code_status = result.get("code_status", -1)
     # code_status: 0=未扫描, 1=已扫描待确认, 2=已确认登录
     if code_status == 2:
-        # 登录成功，提取并保存 Cookie
-        cookie_str = xhs.get_cookie_str()
-        if cookie_str and "web_session" in cookie_str:
-            config.save_cookie(cookie_str)
+        if xhs.has_cookie:
             return jsonify({"status": "ok", "message": "登录成功"})
         else:
             return jsonify({"status": "waiting", "code_status": code_status,

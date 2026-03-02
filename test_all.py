@@ -303,6 +303,9 @@ def test_xhs_api_methods():
         "get_self_info", "set_cookie", "create_qrcode",
         "check_qrcode", "get_cookie_str", "has_cookie",
     ]
+    # 验证底层 XhsClient 有 activate 方法（QR 登录后激活会话用）
+    from xhs import XhsClient
+    assert_true(hasattr(XhsClient, "activate"))
     for name in expected:
         assert_true(hasattr(XhsAPI, name) or hasattr(XhsAPI, name))
 

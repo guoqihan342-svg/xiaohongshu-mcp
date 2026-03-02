@@ -230,13 +230,14 @@ def check_qrcode(qr_id: str, code: str, ctx: Context = None) -> str:
         code: qrcode_login 返回的验证码
     """
     xhs = _xhs(ctx)
+    # xhs_client.check_qrcode 会自动激活会话并保存 Cookie
     result = xhs.check_qrcode(qr_id=qr_id, code=code)
     code_status = result.get("code_status", -1)
     if code_status == 2:
-        cookie_str = xhs.get_cookie_str()
-        if cookie_str and "web_session" in cookie_str:
-            config.save_cookie(cookie_str)
+        if xhs.has_cookie:
             return _ok({"status": "ok", "message": "登录成功,Cookie 已保存"})
+        return _ok({"status": "waiting", "code_status": code_status,
+                     "message": "已确认但 Cookie 未就绪"})
     status_map = {0: "等待扫码", 1: "已扫码,请在手机上确认"}
     return _ok({
         "status": "waiting",

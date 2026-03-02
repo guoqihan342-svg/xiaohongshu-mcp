@@ -144,7 +144,10 @@
                 <button onclick="startQrLogin()" id="qr-btn" class="bg-red-500 hover:bg-red-600 text-white px-6 py-2.5 rounded-lg text-sm font-medium">生成二维码</button>
             </div>
             <div id="qr-display" class="hidden text-center mt-4 fade-in">
-                <img id="qr-img" class="mx-auto rounded-xl shadow-md" style="width:220px;height:220px" alt="二维码">
+                <div class="relative inline-block">
+                    <img id="qr-img" class="mx-auto rounded-xl shadow-md" style="width:220px;height:220px" alt="二维码">
+                    <span id="qr-countdown" class="hidden absolute top-2 right-2 bg-black/60 text-white text-xs px-2 py-0.5 rounded-full">120s</span>
+                </div>
                 <p id="qr-status" class="mt-3 text-sm text-gray-500">请用小红书 APP 扫描二维码</p>
                 <button onclick="startQrLogin()" class="mt-2 text-xs text-red-500 hover:text-red-600">刷新二维码</button>
             </div>
@@ -296,10 +299,13 @@ async function refreshSign(){
     }finally{btn.disabled=false;btn.textContent='重建签名会话'}
 }
 
-// ===== 扫码登录 =====
-let qrTimer=null;
-async function startQrLogin(){
+// ===== 扫码登录（自动刷新） =====
+let qrTimer=null,qrCountdown=null,qrRefreshCount=0;
+const QR_EXPIRE_SEC=120,QR_MAX_REFRESH=5;
+async function startQrLogin(auto=false){
     if(qrTimer){clearInterval(qrTimer);qrTimer=null}
+    if(qrCountdown){clearInterval(qrCountdown);qrCountdown=null}
+    if(!auto)qrRefreshCount=0;
     $('qr-btn').disabled=true;$('qr-btn').textContent='生成中...';
     $('qr-msg').classList.add('hidden');
     try{
@@ -308,15 +314,37 @@ async function startQrLogin(){
         $('qr-display').classList.remove('hidden');
         $('qr-status').textContent='请用小红书 APP 扫描二维码';
         $('qr-status').className='mt-3 text-sm text-gray-500';
-        // 轮询检查状态，每 2 秒一次，最多 2 分钟
+        // 倒计时显示
+        let remain=QR_EXPIRE_SEC;
+        const cdEl=$('qr-countdown');
+        if(cdEl){cdEl.textContent=remain+'s';cdEl.classList.remove('hidden')}
+        qrCountdown=setInterval(()=>{remain--;if(cdEl)cdEl.textContent=remain+'s';if(remain<=0&&qrCountdown){clearInterval(qrCountdown);qrCountdown=null}},1000);
+        // 轮询检查状态
         let count=0;
         qrTimer=setInterval(async()=>{
             count++;
-            if(count>60){clearInterval(qrTimer);qrTimer=null;$('qr-status').textContent='二维码已过期，请刷新';$('qr-status').className='mt-3 text-sm text-yellow-500';return}
+            if(count>QR_EXPIRE_SEC/2){
+                clearInterval(qrTimer);qrTimer=null;
+                if(qrCountdown){clearInterval(qrCountdown);qrCountdown=null}
+                if(cdEl)cdEl.classList.add('hidden');
+                // 自动刷新（有上限）
+                if(qrRefreshCount<QR_MAX_REFRESH){
+                    qrRefreshCount++;
+                    $('qr-status').textContent=`二维码已过期，自动刷新中...（${qrRefreshCount}/${QR_MAX_REFRESH}）`;
+                    $('qr-status').className='mt-3 text-sm text-yellow-500';
+                    startQrLogin(true);
+                }else{
+                    $('qr-status').textContent='二维码已过期，请手动刷新';
+                    $('qr-status').className='mt-3 text-sm text-yellow-500';
+                }
+                return;
+            }
             try{
                 const r=await api('/api/qrcode/check',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({qr_id:d.qr_id,code:d.code})});
                 if(r.status==='ok'){
                     clearInterval(qrTimer);qrTimer=null;
+                    if(qrCountdown){clearInterval(qrCountdown);qrCountdown=null}
+                    if(cdEl)cdEl.classList.add('hidden');
                     $('qr-status').textContent='登录成功！';
                     $('qr-status').className='mt-3 text-sm text-green-600 font-medium';
                     $('qr-msg').className='text-sm mt-3 text-center text-green-600';$('qr-msg').textContent='已登录，Cookie 已自动保存';$('qr-msg').classList.remove('hidden');
