@@ -14,13 +14,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - `server.py` — MCP Server 入口（支持 stdio / SSE / streamable-http 三种传输）
 - `xhs_client.py` — 小红书 API 客户端封装（基于 xhs 库，含智能延迟和 UA 轮换）
+- `scraper.py` — Scrapling 增强爬取模块（TLS 指纹伪装 + 隐身浏览器，API 备用方案）
 - `config.py` — 配置管理（Cookie 持久化、签名服务地址等）
 - `utils.py` — 共享验证函数
-- `sign_server.py` — Playwright 签名服务
+- `sign_server.py` — Patchright 隐身签名服务（替代 Playwright + stealth）
 - `web_panel.py` — Flask Web 管理面板
 - `login.py` — 浏览器扫码登录
 - `start.py` — 一键启动（签名服务 + Web 面板 + MCP HTTP 服务）
-- `templates/index.html` — 前端页面（暗色模式 + 搜索历史）
+- `templates/index.html` — 前端页面（暗色模式 + 搜索历史 + 隐身搜索）
 
 ## 环境变量
 

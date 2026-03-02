@@ -14,6 +14,7 @@ from werkzeug.utils import secure_filename
 from xhs.exception import DataFetchError, IPBlockError, SignError, NeedVerifyError
 
 from xhs_client import XhsAPI
+from scraper import scrape_note_by_url, scrape_search, fetch_url
 from utils import validate_keyword, validate_cookie, clamp, validate_enum
 import config
 
@@ -241,6 +242,41 @@ def api_qrcode_check():
         "code_status": code_status,
         "message": status_map.get(code_status, f"未知状态: {code_status}"),
     })
+
+
+# ===== Scrapling 增强爬取 API =====
+
+@app.route("/api/scrape/note", methods=["POST"])
+@api_handler
+def api_scrape_note():
+    """用隐身浏览器直接爬取笔记页面（API 被封时的备用方案）"""
+    data = request.get_json(silent=True)
+    if not data or "url" not in data:
+        raise ValueError("请提供 url 字段（笔记链接或 ID）")
+    return jsonify(scrape_note_by_url(data["url"].strip()))
+
+
+@app.route("/api/scrape/search")
+@api_handler
+def api_scrape_search():
+    """用隐身浏览器直接搜索（API 被封时的备用方案）"""
+    keyword = validate_keyword(request.args.get("keyword", ""))
+    page = clamp(int(request.args.get("page", 1)), 1, 100, 1)
+    return jsonify(scrape_search(keyword=keyword, page=page))
+
+
+@app.route("/api/scrape/url", methods=["POST"])
+@api_handler
+def api_scrape_url():
+    """通用隐身网页抓取"""
+    data = request.get_json(silent=True)
+    if not data or "url" not in data:
+        raise ValueError("请提供 url 字段")
+    url = data["url"].strip()
+    if not url.startswith("http"):
+        raise ValueError("URL 必须以 http:// 或 https:// 开头")
+    use_browser = data.get("use_browser", False)
+    return jsonify(fetch_url(url, use_browser=use_browser))
 
 
 if __name__ == "__main__":

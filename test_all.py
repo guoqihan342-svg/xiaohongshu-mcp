@@ -40,6 +40,7 @@ print("=" * 50)
 test("导入 config", lambda: __import__("config"))
 test("导入 utils", lambda: __import__("utils"))
 test("导入 xhs_client", lambda: __import__("xhs_client"))
+test("导入 scraper", lambda: __import__("scraper"))
 test("导入 server", lambda: __import__("server"))
 test("导入 web_panel", lambda: __import__("web_panel"))
 
@@ -325,6 +326,76 @@ test("a1 同步对不可达服务返回空", test_sync_a1)
 # ============================================================
 print()
 print("=" * 50)
+print("6.5 Scrapling 增强爬取模块测试")
+print("=" * 50)
+
+
+def test_scraper_import():
+    from scraper import scrape_note_by_url, scrape_search, fetch_url
+    assert_true(callable(scrape_note_by_url))
+    assert_true(callable(scrape_search))
+    assert_true(callable(fetch_url))
+
+
+test("scraper 模块函数可导入", test_scraper_import)
+
+
+def test_scrapling_fetcher():
+    from scrapling import Fetcher
+    assert_true(hasattr(Fetcher, "get"))
+    assert_true(hasattr(Fetcher, "post"))
+
+
+test("Scrapling Fetcher 类可用", test_scrapling_fetcher)
+
+
+def test_scrapling_stealthy():
+    from scrapling import StealthyFetcher
+    assert_true(hasattr(StealthyFetcher, "fetch"))
+
+
+test("Scrapling StealthyFetcher 类可用", test_scrapling_stealthy)
+
+
+def test_curl_cffi():
+    import curl_cffi
+    assert_true(hasattr(curl_cffi, "__version__"))
+
+
+test("curl_cffi TLS 指纹库可用", test_curl_cffi)
+
+
+def test_patchright():
+    from patchright.sync_api import sync_playwright
+    assert_true(callable(sync_playwright))
+
+
+test("Patchright 隐身浏览器可用", test_patchright)
+
+
+def test_extract_json():
+    from scraper import _extract_json_from_script
+    html = '<script>window.__INITIAL_STATE__ = {"key": "value"}</script>'
+    result = _extract_json_from_script(
+        html, r'window\.__INITIAL_STATE__\s*=\s*({.*?})\s*</script>')
+    assert_true(result is not None)
+    assert_true(result["key"] == "value")
+
+
+test("JSON 提取函数正常工作", test_extract_json)
+
+
+def test_extract_json_invalid():
+    from scraper import _extract_json_from_script
+    result = _extract_json_from_script("no match", r'window\.__X__\s*=\s*({.*?})')
+    assert_true(result is None)
+
+
+test("JSON 提取对无匹配返回 None", test_extract_json_invalid)
+
+# ============================================================
+print()
+print("=" * 50)
 print("7. Web 面板路由测试")
 print("=" * 50)
 
@@ -437,6 +508,17 @@ try:
 
     test("POST /api/qrcode/check 缺参数 400", test_qrcode_check_missing)
 
+    # Scrapling 增强爬取 API
+    test("POST /api/scrape/note 缺参数 400",
+         lambda: assert_true(client.post("/api/scrape/note", json={}).status_code == 400))
+    test("GET /api/scrape/search 无关键词 400",
+         lambda: assert_true(client.get("/api/scrape/search").status_code == 400))
+    test("POST /api/scrape/url 缺参数 400",
+         lambda: assert_true(client.post("/api/scrape/url", json={}).status_code == 400))
+    test("POST /api/scrape/url 非法URL 400",
+         lambda: assert_true(client.post("/api/scrape/url",
+                                          json={"url": "not-a-url"}).status_code == 400))
+
     # secure_filename 安全性
     def test_secure_upload():
         from werkzeug.utils import secure_filename
@@ -462,6 +544,7 @@ try:
         "search_notes", "get_note_detail", "get_user_info",
         "get_user_notes", "create_note", "create_video_note",
         "set_cookie", "get_self_info", "qrcode_login", "check_qrcode",
+        "scrape_note", "scrape_search_notes", "scrape_webpage",
     ]
     for name in expected_tools:
         test(f"MCP 工具 {name} 已注册", lambda n=name: assert_true(n in tools))
@@ -488,6 +571,7 @@ test("start.py 语法正确", lambda: check_syntax("start.py"))
 test("config.py 语法正确", lambda: check_syntax("config.py"))
 test("utils.py 语法正确", lambda: check_syntax("utils.py"))
 test("xhs_client.py 语法正确", lambda: check_syntax("xhs_client.py"))
+test("scraper.py 语法正确", lambda: check_syntax("scraper.py"))
 test("server.py 语法正确", lambda: check_syntax("server.py"))
 test("web_panel.py 语法正确", lambda: check_syntax("web_panel.py"))
 
@@ -501,7 +585,7 @@ print("=" * 50)
 def test_deps():
     import importlib
     for mod in ["mcp", "xhs", "httpx", "flask", "qrcode", "gevent",
-                "playwright", "playwright_stealth"]:
+                "patchright", "scrapling", "curl_cffi"]:
         importlib.import_module(mod)
 
 

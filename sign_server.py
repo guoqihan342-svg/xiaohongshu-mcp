@@ -1,12 +1,11 @@
-"""小红书签名服务 - 基于 Playwright 生成 x-s/x-t 请求头"""
+"""小红书签名服务 - 基于 Patchright（隐身 Playwright）生成 x-s/x-t 请求头"""
 
 import logging
 import time
 
 from flask import Flask, request, jsonify
 from gevent import monkey
-from playwright.sync_api import sync_playwright
-from playwright_stealth import Stealth
+from patchright.sync_api import sync_playwright
 
 monkey.patch_all()
 
@@ -15,19 +14,17 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-stealth = Stealth()
-
 
 def get_context_page(instance):
     chromium = instance.chromium
     browser = chromium.launch(headless=True)
     context = browser.new_context()
     page = context.new_page()
-    stealth.apply_stealth_sync(page)
+    # Patchright 内置反检测，无需额外 stealth 注入
     return context, page
 
 
-logger.info("正在启动 Playwright...")
+logger.info("正在启动 Patchright（隐身浏览器）...")
 playwright = sync_playwright().start()
 browser_context, context_page = get_context_page(playwright)
 

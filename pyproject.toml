@@ -10,8 +10,8 @@ dependencies = [
     "flask",
     "qrcode[pil]",
     "gevent",
-    "playwright",
-    "playwright-stealth",
+    "patchright",
+    "scrapling[fetchers]",
 ]
 
 [tool.setuptools]

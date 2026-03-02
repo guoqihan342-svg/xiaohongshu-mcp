@@ -13,6 +13,7 @@ from xhs.exception import DataFetchError, IPBlockError, SignError, NeedVerifyErr
 
 import config
 from xhs_client import XhsAPI
+from scraper import scrape_note_by_url, scrape_search, fetch_url
 from utils import (clamp, validate_enum, validate_keyword,
                    validate_id, validate_cookie, validate_file_path)
 
@@ -244,6 +245,56 @@ def check_qrcode(qr_id: str, code: str, ctx: Context = None) -> str:
         "code_status": code_status,
         "message": status_map.get(code_status, f"未知状态: {code_status}"),
     })
+
+
+# ===== Scrapling 增强爬取工具 =====
+
+@mcp.tool()
+@_tool_error_handler
+def scrape_note(url_or_id: str, ctx: Context = None) -> str:
+    """用隐身浏览器直接爬取小红书笔记页面（API 被封时的备用方案）。
+
+    使用 Scrapling + Patchright 隐身浏览器绕过反爬，直接从网页提取笔记内容。
+
+    Args:
+        url_or_id: 笔记链接或笔记 ID
+    """
+    return _ok(scrape_note_by_url(url_or_id.strip()))
+
+
+@mcp.tool()
+@_tool_error_handler
+def scrape_search_notes(keyword: str, page: int = 1,
+                        ctx: Context = None) -> str:
+    """用隐身浏览器直接搜索小红书（API 被封时的备用方案）。
+
+    使用 Scrapling + Patchright 隐身浏览器绕过反爬，直接从搜索页面提取结果。
+
+    Args:
+        keyword: 搜索关键词
+        page: 页码,默认 1
+    """
+    return _ok(scrape_search(
+        keyword=validate_keyword(keyword),
+        page=clamp(page, 1, 100, 1),
+    ))
+
+
+@mcp.tool()
+@_tool_error_handler
+def scrape_webpage(url: str, use_browser: bool = False,
+                   ctx: Context = None) -> str:
+    """通用隐身网页抓取工具。
+
+    使用 Scrapling 的 TLS 指纹伪装（curl_cffi）或隐身浏览器抓取任意网页。
+
+    Args:
+        url: 目标网页 URL
+        use_browser: 是否使用隐身浏览器（渲染 JS）,默认 False 用 HTTP 请求
+    """
+    if not url.strip().startswith("http"):
+        raise ValueError("URL 必须以 http:// 或 https:// 开头")
+    return _ok(fetch_url(url.strip(), use_browser=use_browser))
 
 
 if __name__ == "__main__":
