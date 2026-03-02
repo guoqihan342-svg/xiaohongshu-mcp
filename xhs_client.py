@@ -1,0 +1,230 @@
+"""小红书 API 客户端封装"""
+
+import atexit
+import logging
+import random
+import time
+import httpx
+from xhs import XhsClient, SearchSortType, SearchNoteType
+
+import config
+
+logger = logging.getLogger(__name__)
+
+
+# ===== 智能延迟系统 =====
+# 模拟真人浏览会话：连续操作时间隔逐渐增大（疲劳效应），长时间空闲后重置
+
+class HumanBehavior:
+    """模拟人类浏览行为的延迟控制器"""
+
+    # 基础间隔范围（秒）
+    BASE_MIN = 1.0
+    BASE_MAX = 3.0
+    # 连续请求时，每次额外增加的延迟范围
+    FATIGUE_STEP = 0.3
+    FATIGUE_MAX = 2.5
+    # 如果空闲超过此时间（秒），视为新会话，重置疲劳
+    SESSION_RESET = 60.0
+    # 偶尔模拟"发呆"的概率和时长
+    PAUSE_CHANCE = 0.08
+    PAUSE_MIN = 5.0
+    PAUSE_MAX = 12.0
+
+    def __init__(self):
+        self._last_time = 0.0
+        self._consecutive = 0
+
+    def delay(self):
+        """根据会话状态计算并执行延迟"""
+        now = time.time()
+        elapsed = now - self._last_time
+
+        # 长时间空闲 → 新会话，重置疲劳计数
+        if elapsed > self.SESSION_RESET:
+            self._consecutive = 0
+        else:
+            self._consecutive += 1
+
+        # 基础延迟 + 疲劳递增（有上限）
+        fatigue = min(self._consecutive * self.FATIGUE_STEP, self.FATIGUE_MAX)
+        delay = random.uniform(self.BASE_MIN + fatigue, self.BASE_MAX + fatigue)
+
+        # 小概率"发呆"：模拟真人被其他事情打断
+        if random.random() < self.PAUSE_CHANCE:
+            delay += random.uniform(self.PAUSE_MIN, self.PAUSE_MAX)
+            logger.debug("模拟用户暂停 %.1f 秒", delay)
+
+        # 扣除已经过去的时间
+        wait = delay - elapsed
+        if wait > 0:
+            time.sleep(wait)
+
+        self._last_time = time.time()
+
+
+_behavior = HumanBehavior()
+
+
+def _human_delay():
+    """模拟人类操作的智能延迟"""
+    _behavior.delay()
+
+
+# ===== 随机 User-Agent =====
+# 真实浏览器 UA 池，每次创建客户端随机选一个
+
+_USER_AGENTS = [
+    # Chrome Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+    # Chrome macOS
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    # Edge Windows
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0",
+]
+
+
+def _random_ua() -> str:
+    return random.choice(_USER_AGENTS)
+
+# 排序方式映射
+SORT_MAP = {
+    "general": SearchSortType.GENERAL,
+    "popular": SearchSortType.MOST_POPULAR,
+    "latest": SearchSortType.LATEST,
+}
+
+# 笔记类型映射
+NOTE_TYPE_MAP = {
+    "all": SearchNoteType.ALL,
+    "video": SearchNoteType.VIDEO,
+    "image": SearchNoteType.IMAGE,
+}
+
+
+def _create_sign_function(sign_url: str):
+    """创建签名函数，通过 HTTP 调用签名服务（复用连接）"""
+    client = httpx.Client(timeout=config.REQUEST_TIMEOUT)
+    atexit.register(client.close)
+
+    def sign(uri: str, data=None, a1: str = "", web_session: str = ""):
+        resp = client.post(sign_url, json={
+            "uri": uri,
+            "data": data,
+            "a1": a1,
+            "web_session": web_session,
+        })
+        resp.raise_for_status()
+        result = resp.json()
+        if "x-s" not in result or "x-t" not in result:
+            raise ValueError(f"签名服务返回格式异常: {result}")
+        return result
+
+    return sign
+
+
+class XhsAPI:
+    """小红书 API 客户端封装"""
+
+    def __init__(self):
+        sign_fn = _create_sign_function(config.XHS_SIGN_URL)
+        ua = _random_ua()
+        logger.info("使用 User-Agent: %s", ua[:50] + "...")
+        self._client = XhsClient(
+            cookie=config.XHS_COOKIE or None,
+            sign=sign_fn,
+            timeout=config.REQUEST_TIMEOUT,
+            user_agent=ua,
+        )
+
+    @property
+    def has_cookie(self) -> bool:
+        """是否已设置用户 Cookie（登录模式），需包含 web_session"""
+        cookie = self._client.cookie or ""
+        return "web_session" in cookie
+
+    def set_cookie(self, cookie: str):
+        """运行时更新 Cookie 并持久化"""
+        self._client.cookie = cookie
+        config.save_cookie(cookie)
+
+    def search_notes(
+        self,
+        keyword: str,
+        page: int = 1,
+        page_size: int = 20,
+        sort: str = "general",
+        note_type: str = "all",
+    ) -> dict:
+        """搜索笔记"""
+        _human_delay()
+        sort_type = SORT_MAP.get(sort, SearchSortType.GENERAL)
+        nt = NOTE_TYPE_MAP.get(note_type, SearchNoteType.ALL)
+        return self._client.get_note_by_keyword(
+            keyword=keyword,
+            page=page,
+            page_size=page_size,
+            sort=sort_type,
+            note_type=nt,
+        )
+
+    def get_note_detail(self, note_id: str) -> dict:
+        """获取笔记详情"""
+        _human_delay()
+        return self._client.get_note_by_id(note_id=note_id)
+
+    def get_user_info(self, user_id: str) -> dict:
+        """获取用户信息"""
+        _human_delay()
+        return self._client.get_user_info(user_id=user_id)
+
+    def get_user_notes(self, user_id: str, cursor: str = "") -> dict:
+        """获取用户笔记列表"""
+        _human_delay()
+        return self._client.get_user_notes(user_id=user_id, cursor=cursor)
+
+    def create_image_note(
+        self,
+        title: str,
+        desc: str,
+        image_paths: list[str],
+        is_private: bool = False,
+    ) -> dict:
+        """创建图文笔记（需要 Cookie 登录）"""
+        if not self.has_cookie:
+            raise RuntimeError("创建笔记需要先设置 Cookie 登录")
+        return self._client.create_image_note(
+            title=title,
+            desc=desc,
+            files=image_paths,
+            is_private=is_private,
+        )
+
+    def create_video_note(
+        self,
+        title: str,
+        desc: str,
+        video_path: str,
+        cover_path: str | None = None,
+        is_private: bool = False,
+    ) -> dict:
+        """创建视频笔记（需要 Cookie 登录）"""
+        if not self.has_cookie:
+            raise RuntimeError("创建笔记需要先设置 Cookie 登录")
+        return self._client.create_video_note(
+            title=title,
+            video_path=video_path,
+            desc=desc,
+            cover_path=cover_path,
+            is_private=is_private,
+        )
+
+    def get_self_info(self) -> dict:
+        """获取当前登录用户信息（需要 Cookie 登录）"""
+        if not self.has_cookie:
+            raise RuntimeError("获取自身信息需要先设置 Cookie 登录")
+        return self._client.get_self_info()

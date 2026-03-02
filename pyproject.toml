@@ -1,0 +1,16 @@
+[project]
+name = "xhs-mcp-server"
+version = "0.1.0"
+description = "小红书 MCP Server - 让 Claude Code 能够搜索和管理小红书笔记"
+requires-python = ">=3.10"
+dependencies = [
+    "mcp[cli]",
+    "xhs",
+    "httpx",
+]
+
+[tool.setuptools]
+py-modules = ["server", "xhs_client", "config"]
+
+[project.scripts]
+xhs-mcp = "server:main"

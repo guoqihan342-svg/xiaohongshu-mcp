@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>小红书管理面板</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+    tailwind.config = {darkMode: 'class'}
+    // 初始化主题（避免闪烁）
+    if (localStorage.theme === 'dark' || (!localStorage.theme && matchMedia('(prefers-color-scheme:dark)').matches)) {
+        document.documentElement.classList.add('dark');
+    }
+    </script>
+    <style>
+        .fade-in{animation:fadeIn .2s ease-in}@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+        .note-card{transition:all .15s ease}.note-card:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.08)}
+        .dark .note-card:hover{box-shadow:0 8px 24px rgba(0,0,0,.3)}
+        .sidebar-item.active{background:#ff2442;color:#fff}.sidebar-item:not(.active):hover{background:#fff1f2}
+        .dark .sidebar-item:not(.active):hover{background:#3f1219}
+        .modal-bg{background:rgba(0,0,0,.5);backdrop-filter:blur(4px)}
+        .loader{border:3px solid #e5e7eb;border-top-color:#ff2442;border-radius:50%;width:24px;height:24px;animation:spin .7s linear infinite;display:inline-block}
+        .dark .loader{border-color:#374151;border-top-color:#ff2442}
+        @keyframes spin{to{transform:rotate(360deg)}}
+        ::-webkit-scrollbar{width:5px}::-webkit-scrollbar-thumb{background:#ddd;border-radius:3px}.dark ::-webkit-scrollbar-thumb{background:#444}
+    </style>
+</head>
+<body class="bg-gray-50 dark:bg-gray-900 h-screen flex overflow-hidden text-gray-800 dark:text-gray-200 transition-colors">
+
+<!-- 侧边栏 -->
+<aside class="w-52 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex flex-col flex-shrink-0">
+    <div class="p-4 border-b border-gray-100 dark:border-gray-700">
+        <h1 class="text-lg font-bold text-red-500">小红书面板</h1>
+        <div id="status-dot" class="mt-1.5 text-xs text-gray-400">加载中...</div>
+    </div>
+    <nav class="flex-1 p-2 space-y-0.5" id="nav">
+        <div class="sidebar-item active rounded-lg px-3 py-2 cursor-pointer text-sm" data-page="search">&#128269; 搜索笔记</div>
+        <div class="sidebar-item rounded-lg px-3 py-2 cursor-pointer text-sm text-gray-600 dark:text-gray-300" data-page="user">&#128100; 用户查询</div>
+        <div class="sidebar-item rounded-lg px-3 py-2 cursor-pointer text-sm text-gray-600 dark:text-gray-300" data-page="publish">&#9999;&#65039; 发布笔记</div>
+        <div class="sidebar-item rounded-lg px-3 py-2 cursor-pointer text-sm text-gray-600 dark:text-gray-300" data-page="settings">&#9881;&#65039; 设置</div>
+    </nav>
+    <div class="p-3 border-t border-gray-100 dark:border-gray-700">
+        <button onclick="toggleTheme()" class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 w-full text-left" id="theme-btn">&#127769; 暗色模式</button>
+    </div>
+</aside>
+
+<!-- 主内容 -->
+<main class="flex-1 overflow-y-auto p-5">
+
+<!-- 搜索笔记 -->
+<div id="page-search">
+    <div class="max-w-5xl mx-auto">
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4 mb-5">
+            <div class="flex gap-2 items-end flex-wrap">
+                <div class="flex-1 min-w-[180px] relative">
+                    <input id="s-kw" type="text" placeholder="搜索关键词..." class="w-full border border-gray-200 dark:border-gray-600 dark:bg-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400" onkeydown="if(event.key==='Enter')doSearch()" onfocus="showHistory()" onblur="setTimeout(hideHistory,200)">
+                    <div id="s-history" class="hidden absolute left-0 right-0 top-full mt-1 bg-white dark:bg-gray-700 border dark:border-gray-600 rounded-lg shadow-lg z-10 max-h-48 overflow-y-auto"></div>
+                </div>
+                <select id="s-sort" class="border border-gray-200 dark:border-gray-600 dark:bg-gray-700 rounded-lg px-2 py-2 text-sm"><option value="general">综合</option><option value="popular">最热</option><option value="latest">最新</option></select>
+                <select id="s-type" class="border border-gray-200 dark:border-gray-600 dark:bg-gray-700 rounded-lg px-2 py-2 text-sm"><option value="all">全部</option><option value="video">视频</option><option value="image">图文</option></select>
+                <button onclick="doSearch()" class="bg-red-500 hover:bg-red-600 text-white px-5 py-2 rounded-lg text-sm font-medium">搜索</button>
+            </div>
+        </div>
+        <div id="s-loading" class="hidden text-center py-10"><div class="loader"></div></div>
+        <div id="s-empty" class="text-center py-10 text-gray-400 text-sm">输入关键词开始搜索</div>
+        <div id="s-results" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3"></div>
+        <div id="s-pager" class="hidden flex justify-center items-center gap-3 mt-5">
+            <button onclick="doSearch(S.page-1)" class="px-3 py-1.5 bg-white dark:bg-gray-800 border dark:border-gray-600 rounded-lg text-sm">上一页</button>
+            <span id="s-page-info" class="text-sm text-gray-500"></span>
+            <button onclick="doSearch(S.page+1)" class="px-3 py-1.5 bg-white dark:bg-gray-800 border dark:border-gray-600 rounded-lg text-sm">下一页</button>
+        </div>
+    </div>
+</div>
+
+<!-- 用户查询 -->
+<div id="page-user" class="hidden">
+    <div class="max-w-3xl mx-auto">
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4 mb-5">
+            <div class="flex gap-2">
+                <input id="u-id" type="text" placeholder="输入用户 ID..." class="flex-1 border border-gray-200 dark:border-gray-600 dark:bg-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400" onkeydown="if(event.key==='Enter')doUserSearch()">
+                <button onclick="doUserSearch()" class="bg-red-500 hover:bg-red-600 text-white px-5 py-2 rounded-lg text-sm font-medium">查询</button>
+            </div>
+        </div>
+        <div id="u-loading" class="hidden text-center py-10"><div class="loader"></div></div>
+        <div id="u-profile" class="hidden bg-white dark:bg-gray-800 rounded-xl shadow-sm p-5 mb-5 fade-in"></div>
+        <div id="u-notes" class="grid grid-cols-2 md:grid-cols-3 gap-3"></div>
+        <div id="u-more" class="hidden text-center mt-4"><button onclick="loadMoreUserNotes()" class="px-5 py-1.5 bg-white dark:bg-gray-800 border dark:border-gray-600 rounded-lg text-sm">加载更多</button></div>
+    </div>
+</div>
+
+<!-- 发布笔记 -->
+<div id="page-publish" class="hidden">
+    <div class="max-w-xl mx-auto bg-white dark:bg-gray-800 rounded-xl shadow-sm p-5">
+        <div class="flex gap-2 mb-5">
+            <button id="tab-img" onclick="pubTab='image';updPubTab()" class="px-3 py-1.5 rounded-lg text-sm font-medium bg-red-500 text-white">图文笔记</button>
+            <button id="tab-vid" onclick="pubTab='video';updPubTab()" class="px-3 py-1.5 rounded-lg text-sm font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">视频笔记</button>
+        </div>
+        <div class="space-y-3">
+            <input id="p-title" type="text" maxlength="100" placeholder="标题" class="w-full border border-gray-200 dark:border-gray-600 dark:bg-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400">
+            <textarea id="p-desc" rows="4" placeholder="正文" class="w-full border border-gray-200 dark:border-gray-600 dark:bg-gray-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400 resize-y"></textarea>
+            <div id="sec-img">
+                <div class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-6 text-center cursor-pointer hover:border-red-400 transition" onclick="$('img-in').click()" id="img-drop">
+                    <p class="text-gray-400 text-sm">点击或拖拽图片上传</p>
+                </div>
+                <input id="img-in" type="file" accept="image/*" multiple class="hidden" onchange="prevImgs(this)">
+                <div id="img-prev" class="flex flex-wrap gap-2 mt-2"></div>
+            </div>
+            <div id="sec-vid" class="hidden">
+                <div class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-6 text-center cursor-pointer hover:border-red-400 transition" onclick="$('vid-in').click()">
+                    <p class="text-gray-400 text-sm" id="vid-name">点击选择视频</p>
+                </div>
+                <input id="vid-in" type="file" accept="video/*" class="hidden" onchange="$('vid-name').textContent=this.files[0]?.name||'点击选择视频'">
+                <div class="mt-3 border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-3 text-center cursor-pointer hover:border-red-400 transition" onclick="$('cov-in').click()">
+                    <p class="text-gray-400 text-xs" id="cov-name">封面图（可选）</p>
+                </div>
+                <input id="cov-in" type="file" accept="image/*" class="hidden" onchange="$('cov-name').textContent=this.files[0]?.name||'封面图（可选）'">
+            </div>
+            <label class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400"><input id="p-priv" type="checkbox" class="rounded"> 仅自己可见</label>
+            <button onclick="doPublish()" id="p-btn" class="w-full bg-red-500 hover:bg-red-600 text-white py-2.5 rounded-lg text-sm font-medium">发布</button>
+            <div id="p-msg" class="hidden text-center text-sm"></div>
+        </div>
+    </div>
+</div>
+
+<!-- 设置 -->
+<div id="page-settings" class="hidden">
+    <div class="max-w-xl mx-auto space-y-5">
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-5">
+            <h2 class="font-semibold mb-3">服务状态</h2>
+            <div class="space-y-2 text-sm">
+                <div class="flex justify-between"><span class="text-gray-500">签名服务</span><span id="st-sign">--</span></div>
+                <div class="flex justify-between"><span class="text-gray-500">登录状态</span><span id="st-cookie">--</span></div>
+            </div>
+            <button onclick="checkStatus()" class="mt-3 text-xs text-red-500 hover:text-red-600">刷新</button>
+        </div>
+        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-5">
+            <h2 class="font-semibold mb-3">Cookie 管理</h2>
+            <p class="text-xs text-gray-400 mb-2">从浏览器 F12 复制 Cookie，需包含 a1 和 web_session。</p>
+            <textarea id="ck-in" rows="3" placeholder="粘贴 Cookie..." class="w-full border border-gray-200 dark:border-gray-600 dark:bg-gray-700 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-red-400 resize-y"></textarea>
+            <button onclick="setCookie()" class="mt-2 bg-red-500 hover:bg-red-600 text-white px-5 py-2 rounded-lg text-sm font-medium">设置</button>
+            <div id="ck-msg" class="hidden text-sm mt-2"></div>
+        </div>
+        <div id="self-card" class="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-5 hidden">
+            <h2 class="font-semibold mb-3">当前用户</h2>
+            <div id="self-body"></div>
+        </div>
+    </div>
+</div>
+
+</main>
+
+<!-- 弹窗 -->
+<div id="modal" class="fixed inset-0 modal-bg z-50 hidden flex items-center justify-center" onclick="if(event.target===this)closeModal()">
+    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-2xl w-full mx-4 max-h-[85vh] overflow-y-auto fade-in">
+        <div class="p-5">
+            <div class="flex justify-between items-start mb-3">
+                <h2 id="m-title" class="text-lg font-bold"></h2>
+                <button onclick="closeModal()" class="text-gray-400 hover:text-gray-600 text-xl">&times;</button>
+            </div>
+            <div id="m-body"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="fixed top-4 right-4 z-[100] hidden"><div class="px-4 py-2.5 rounded-lg shadow-lg text-sm fade-in"></div></div>
+
+<script>
+const $=id=>document.getElementById(id);
+const S={page:1,kw:''}; // 搜索状态
+const U={id:'',cursor:''}; // 用户状态
+let pubTab='image';
+
+// ===== 通用 =====
+function toast(msg,err){const el=$('toast'),d=el.firstElementChild;d.textContent=msg;d.className=`px-4 py-2.5 rounded-lg shadow-lg text-sm fade-in ${err?'bg-red-600 text-white':'bg-gray-800 text-white'}`;el.classList.remove('hidden');setTimeout(()=>el.classList.add('hidden'),3000)}
+async function api(url,opt){const r=await fetch(url,opt);const d=await r.json();if(!r.ok)throw new Error(d.message||d.error||'请求失败');return d}
+function esc(s){const d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
+
+// ===== 主题 =====
+function toggleTheme(){const dark=document.documentElement.classList.toggle('dark');localStorage.theme=dark?'dark':'light';updThemeBtn()}
+function updThemeBtn(){$('theme-btn').innerHTML=document.documentElement.classList.contains('dark')?'&#9728;&#65039; 浅色模式':'&#127769; 暗色模式'}
+updThemeBtn();
+
+// ===== 导航 =====
+$('nav').addEventListener('click',e=>{const item=e.target.closest('[data-page]');if(!item)return;
+    document.querySelectorAll('.sidebar-item').forEach(el=>el.classList.remove('active'));item.classList.add('active');
+    document.querySelectorAll('[id^="page-"]').forEach(el=>el.classList.add('hidden'));$('page-'+item.dataset.page).classList.remove('hidden');
+    if(item.dataset.page==='settings'){checkStatus();loadSelf()}});
+
+// ===== 搜索历史 =====
+function getHistory(){try{return JSON.parse(localStorage.xhs_history||'[]')}catch{return[]}}
+function addHistory(kw){let h=getHistory().filter(x=>x!==kw);h.unshift(kw);localStorage.xhs_history=JSON.stringify(h.slice(0,10))}
+function showHistory(){const h=getHistory();if(!h.length)return;const el=$('s-history');el.innerHTML=h.map(k=>`<div class="px-3 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer truncate" onmousedown="$('s-kw').value='${esc(k)}';doSearch()">${esc(k)}</div>`).join('')+'<div class="px-3 py-1 text-xs text-red-400 hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer border-t dark:border-gray-600" onmousedown="localStorage.removeItem(\'xhs_history\');hideHistory()">清除历史</div>';el.classList.remove('hidden')}
+function hideHistory(){$('s-history').classList.add('hidden')}
+
+// ===== 笔记卡片渲染（共享） =====
+function renderCard(item){
+    const n=item.note_card||item;const cover=n.cover?.url||n.cover?.info_list?.[0]?.url||'';
+    const title=n.display_title||n.title||'';const author=n.user?.nickname||n.user?.nick_name||'';
+    const likes=n.interact_info?.liked_count||n.liked_count||'';
+    const nid=item.id||n.note_id||'';const tk=item.xsec_token||n.xsec_token||'';
+    return `<div class="note-card bg-white dark:bg-gray-800 rounded-xl overflow-hidden shadow-sm cursor-pointer" onclick="showNote('${esc(nid)}','${esc(tk)}')">
+        ${cover?`<div class="aspect-[3/4] overflow-hidden bg-gray-100 dark:bg-gray-700"><img src="${esc(cover)}" class="w-full h-full object-cover" loading="lazy" onerror="this.parentElement.innerHTML='<div class=\\'flex items-center justify-center h-full text-gray-300 dark:text-gray-600 text-xs\\'>无图</div>'"></div>`:'<div class="aspect-[3/4] bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-gray-300 text-xs">无图</div>'}
+        <div class="p-2.5"><div class="text-sm font-medium line-clamp-2 leading-tight">${esc(title)}</div>
+        <div class="flex justify-between items-center mt-1.5"><span class="text-xs text-gray-400 truncate">${esc(author)}</span>${likes?`<span class="text-xs text-gray-400">${esc(String(likes))}</span>`:''}</div></div></div>`}
+
+// ===== 搜索 =====
+async function doSearch(page=1){
+    const kw=$('s-kw').value.trim();if(!kw){toast('请输入关键词',1);return}
+    if(page<1)page=1;S.kw=kw;S.page=page;addHistory(kw);hideHistory();
+    $('s-loading').classList.remove('hidden');$('s-results').innerHTML='';$('s-empty').classList.add('hidden');$('s-pager').classList.add('hidden');
+    try{const d=await api(`/api/search?keyword=${encodeURIComponent(kw)}&page=${page}&page_size=20&sort=${$('s-sort').value}&note_type=${$('s-type').value}`);
+        $('s-loading').classList.add('hidden');const items=d.items||d.notes||[];
+        if(!items.length){$('s-empty').textContent='没有找到相关笔记';$('s-empty').classList.remove('hidden');return}
+        $('s-results').innerHTML=items.map(renderCard).join('');
+        $('s-pager').classList.remove('hidden');$('s-page-info').textContent=`第 ${page} 页`;
+    }catch(e){$('s-loading').classList.add('hidden');toast(e.message,1)}}
+
+// ===== 笔记详情 =====
+async function showNote(id,tk){
+    $('modal').classList.remove('hidden');$('m-title').textContent='加载中...';$('m-body').innerHTML='<div class="text-center py-6"><div class="loader"></div></div>';
+    try{const d=await api(`/api/note/${id}?xsec_token=${encodeURIComponent(tk)}`);const n=d[0]?.note_card||d.note_card||d;
+        $('m-title').textContent=n.title||n.display_title||'';const imgs=n.image_list||n.images||[];
+        const liked=n.interact_info?.liked_count||'';const coll=n.interact_info?.collected_count||'';const comm=n.interact_info?.comment_count||'';
+        $('m-body').innerHTML=`<div class="text-sm text-gray-500 mb-3">${esc(n.user?.nickname||'')} ${n.time?'&middot; '+new Date(n.time).toLocaleString('zh-CN'):''}</div>
+            ${imgs.length?`<div class="space-y-2 mb-3">${imgs.map(i=>{const u=i.url||i.info_list?.[0]?.url||'';return u?`<img src="${esc(u)}" class="w-full rounded-lg" loading="lazy">`:''}).join('')}</div>`:''}
+            <div class="text-sm leading-relaxed whitespace-pre-wrap mb-3">${esc(n.desc||'')}</div>
+            <div class="flex gap-5 text-xs text-gray-400 border-t dark:border-gray-700 pt-3">${liked?`<span>&#10084; ${esc(String(liked))}</span>`:''}${coll?`<span>&#9733; ${esc(String(coll))}</span>`:''}${comm?`<span>&#128172; ${esc(String(comm))}</span>`:''}</div>`;
+    }catch(e){$('m-title').textContent='加载失败';$('m-body').innerHTML=`<p class="text-red-500 text-sm">${esc(e.message)}</p>`}}
+function closeModal(){$('modal').classList.add('hidden')}
+
+// ===== 用户 =====
+async function doUserSearch(){
+    const uid=$('u-id').value.trim();if(!uid){toast('请输入用户 ID',1);return}
+    U.id=uid;U.cursor='';$('u-loading').classList.remove('hidden');$('u-profile').classList.add('hidden');$('u-notes').innerHTML='';$('u-more').classList.add('hidden');
+    try{const d=await api(`/api/user/${uid}`);$('u-loading').classList.add('hidden');const i=d.basic_info||d;
+        $('u-profile').classList.remove('hidden');$('u-profile').innerHTML=`<div class="flex items-center gap-4">
+            ${i.imageb||i.images?`<img src="${esc(i.imageb||i.images)}" class="w-16 h-16 rounded-full object-cover">`:'<div class="w-16 h-16 rounded-full bg-gray-200 dark:bg-gray-600"></div>'}
+            <div><div class="font-bold">${esc(i.nickname||i.nick_name||'--')}</div><div class="text-xs text-gray-400 mt-1">${esc(i.desc||i.description||'')}</div>
+            <div class="flex gap-4 mt-2 text-sm"><span><strong>${esc(String(i.interaction?.fans||i.fans||'--'))}</strong> <span class="text-gray-400">粉丝</span></span><span><strong>${esc(String(i.interaction?.follows||i.follows||'--'))}</strong> <span class="text-gray-400">关注</span></span></div></div></div>`;
+        loadUserNotes();}catch(e){$('u-loading').classList.add('hidden');toast(e.message,1)}}
+async function loadUserNotes(){
+    try{const d=await api(`/api/user/${U.id}/notes?cursor=${encodeURIComponent(U.cursor)}`);const notes=d.notes||[];U.cursor=d.cursor||'';
+        if(notes.length)$('u-notes').innerHTML+=notes.map(renderCard).join('');
+        $('u-more').classList.toggle('hidden',!U.cursor||d.has_more===false);
+    }catch(e){toast(e.message,1)}}
+function loadMoreUserNotes(){loadUserNotes()}
+
+// ===== 发布 =====
+function updPubTab(){$('tab-img').className=`px-3 py-1.5 rounded-lg text-sm font-medium ${pubTab==='image'?'bg-red-500 text-white':'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300'}`;
+    $('tab-vid').className=`px-3 py-1.5 rounded-lg text-sm font-medium ${pubTab==='video'?'bg-red-500 text-white':'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300'}`;
+    $('sec-img').classList.toggle('hidden',pubTab!=='image');$('sec-vid').classList.toggle('hidden',pubTab!=='video')}
+function prevImgs(input){const c=$('img-prev');c.innerHTML='';Array.from(input.files).forEach(f=>{const r=new FileReader();r.onload=e=>{c.innerHTML+=`<div class="relative"><img src="${e.target.result}" class="w-16 h-16 object-cover rounded-lg"><span class="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-4 h-4 text-xs flex items-center justify-center cursor-pointer" onclick="this.parentElement.remove()">&times;</span></div>`};r.readAsDataURL(f)})}
+async function doPublish(){
+    const title=$('p-title').value.trim();if(!title){toast('请输入标题',1);return}
+    const fd=new FormData();fd.append('title',title);fd.append('desc',$('p-desc').value);fd.append('is_private',$('p-priv').checked);
+    let url;if(pubTab==='image'){const f=$('img-in').files;if(!f.length){toast('请选择图片',1);return}for(const i of f)fd.append('images',i);url='/api/note/create'}
+    else{const v=$('vid-in').files[0];if(!v){toast('请选择视频',1);return}fd.append('video',v);const c=$('cov-in').files[0];if(c)fd.append('cover',c);url='/api/note/create_video'}
+    const btn=$('p-btn');btn.disabled=true;btn.textContent='发布中...';
+    try{await api(url,{method:'POST',body:fd});toast('发布成功');$('p-title').value='';$('p-desc').value='';$('img-in').value='';$('vid-in').value='';$('cov-in').value='';$('img-prev').innerHTML='';$('vid-name').textContent='点击选择视频';$('cov-name').textContent='封面图（可选）';
+        $('p-msg').className='text-sm mt-2 text-green-600';$('p-msg').textContent='发布成功！';$('p-msg').classList.remove('hidden');
+    }catch(e){toast(e.message,1);$('p-msg').className='text-sm mt-2 text-red-500';$('p-msg').textContent=e.message;$('p-msg').classList.remove('hidden')}
+    finally{btn.disabled=false;btn.textContent='发布'}}
+
+// ===== 设置 =====
+async function checkStatus(){try{const d=await api('/api/status');
+    $('st-sign').innerHTML=d.sign_service?'<span class="text-green-600 font-medium">正常</span>':'<span class="text-red-500 font-medium">未连接</span>';
+    $('st-cookie').innerHTML=d.has_cookie?'<span class="text-green-600 font-medium">已登录</span>':'<span class="text-yellow-500 font-medium">未登录</span>';
+    $('status-dot').innerHTML=d.has_cookie?'<span class="text-green-500">&#9679;</span> 已登录':'<span class="text-yellow-500">&#9679;</span> 未登录';
+    }catch{$('status-dot').innerHTML='<span class="text-red-500">&#9679;</span> 离线'}}
+async function setCookie(){const ck=$('ck-in').value.trim();if(!ck){toast('请输入 Cookie',1);return}
+    try{await api('/api/cookie',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cookie:ck})});
+        toast('设置成功');$('ck-msg').className='text-sm mt-2 text-green-600';$('ck-msg').textContent='Cookie 设置成功';$('ck-msg').classList.remove('hidden');checkStatus();loadSelf();
+    }catch(e){toast(e.message,1);$('ck-msg').className='text-sm mt-2 text-red-500';$('ck-msg').textContent=e.message;$('ck-msg').classList.remove('hidden')}}
+async function loadSelf(){try{const d=await api('/api/self');const i=d.basic_info||d;$('self-card').classList.remove('hidden');
+    $('self-body').innerHTML=`<div class="flex items-center gap-3">${i.imageb?`<img src="${esc(i.imageb)}" class="w-12 h-12 rounded-full object-cover">`:''}<div><div class="font-medium">${esc(i.nickname||i.nick_name||'--')}</div><div class="text-xs text-gray-400">RED ID: ${esc(i.red_id||i.redId||'--')}</div></div></div>`;
+    }catch{$('self-card').classList.add('hidden')}}
+
+// ===== 初始化 =====
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal()});
+const dz=$('img-drop');if(dz){['dragenter','dragover'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.add('border-red-400')}));
+    ['dragleave','drop'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.remove('border-red-400')}));
+    dz.addEventListener('drop',e=>{$('img-in').files=e.dataTransfer.files;prevImgs($('img-in'))})}
+checkStatus();
+</script>
+</body>
+</html>
