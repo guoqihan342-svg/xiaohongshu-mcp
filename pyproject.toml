@@ -10,7 +10,8 @@ dependencies = [
     "flask",
     "qrcode[pil]",
     "gevent",
-    "patchright",
+    "playwright",
+    "playwright-stealth",
     "scrapling[fetchers]",
 ]
 

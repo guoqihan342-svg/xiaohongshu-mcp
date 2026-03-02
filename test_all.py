@@ -585,6 +585,7 @@ print("=" * 50)
 def test_deps():
     import importlib
     for mod in ["mcp", "xhs", "httpx", "flask", "qrcode", "gevent",
+                "playwright", "playwright_stealth",
                 "patchright", "scrapling", "curl_cffi"]:
         importlib.import_module(mod)
 

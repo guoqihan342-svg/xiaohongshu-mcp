@@ -1,11 +1,16 @@
-"""小红书签名服务 - 基于 Patchright（隐身 Playwright）生成 x-s/x-t 请求头"""
+"""小红书签名服务 - 基于 Playwright + Stealth 生成 x-s/x-t 请求头
+
+签名服务使用 Playwright + playwright-stealth（经验证最稳定）。
+Scrapling/Patchright 用于 scraper.py 的增强爬取模块。
+"""
 
 import logging
 import time
 
 from flask import Flask, request, jsonify
 from gevent import monkey
-from patchright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright
+from playwright_stealth import Stealth
 
 monkey.patch_all()
 
@@ -14,17 +19,38 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
+stealth = Stealth()
+
 
 def get_context_page(instance):
     chromium = instance.chromium
     browser = chromium.launch(headless=True)
-    context = browser.new_context()
+    context = browser.new_context(
+        viewport={"width": 1920, "height": 1080},
+        locale="zh-CN",
+        timezone_id="Asia/Shanghai",
+    )
     page = context.new_page()
-    # Patchright 内置反检测，无需额外 stealth 注入
+    stealth.apply_stealth_sync(page)
     return context, page
 
 
-logger.info("正在启动 Patchright（隐身浏览器）...")
+def _wait_for_sign_fn(page, max_retry=15, interval=2):
+    """等待签名函数 _webmsxyw 加载就绪"""
+    for i in range(max_retry):
+        try:
+            has_fn = page.evaluate("() => typeof window._webmsxyw === 'function'")
+            if has_fn:
+                logger.info("签名函数 _webmsxyw 已就绪")
+                return True
+        except Exception:
+            pass
+        logger.info("等待签名函数加载... (%d/%d)", i + 1, max_retry)
+        time.sleep(interval)
+    return False
+
+
+logger.info("正在启动 Playwright...")
 playwright = sync_playwright().start()
 browser_context, context_page = get_context_page(playwright)
 
@@ -35,14 +61,7 @@ time.sleep(3)
 context_page.wait_for_load_state("networkidle")
 time.sleep(2)
 
-for i in range(10):
-    has_sign_fn = context_page.evaluate("() => typeof window._webmsxyw === 'function'")
-    if has_sign_fn:
-        logger.info("签名函数 _webmsxyw 已就绪")
-        break
-    logger.info("等待签名函数加载... (%d/10)", i + 1)
-    time.sleep(2)
-else:
+if not _wait_for_sign_fn(context_page):
     logger.warning("签名函数未检测到，签名可能失败")
 
 cookies = browser_context.cookies()
@@ -91,10 +110,7 @@ def refresh_handler():
         time.sleep(3)
         context_page.wait_for_load_state("networkidle")
         time.sleep(2)
-        for i in range(10):
-            if context_page.evaluate("() => typeof window._webmsxyw === 'function'"):
-                break
-            time.sleep(2)
+        _wait_for_sign_fn(context_page)
         a1 = ""
         for cookie in browser_context.cookies():
             if cookie["name"] == "a1":
