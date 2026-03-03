@@ -23,51 +23,56 @@ else:
 SIGN_URL = os.environ.get("XHS_SIGN_URL", "http://localhost:5555/sign")
 
 
-def _find_playwright_driver() -> str | None:
-    """找到 Playwright 驱动可执行文件路径"""
-    # frozen EXE 模式：驱动在 _MEIPASS/playwright/driver/
-    if getattr(sys, "frozen", False):
-        meipass = getattr(sys, "_MEIPASS", BASE_DIR)
-        for name in ["playwright.cmd", "playwright.exe", "playwright"]:
-            candidate = os.path.join(meipass, "playwright", "driver", name)
-            if os.path.exists(candidate):
-                return candidate
-        return None
-
-    # 开发模式：通过 playwright 包获取
-    try:
-        from playwright._impl._driver import compute_driver_executable
-        driver = str(compute_driver_executable())
-        if os.path.exists(driver):
-            return driver
-    except Exception:
-        pass
-    return None
-
-
 def _ensure_browsers():
     """确保 Playwright Chromium 已安装（首次运行时自动下载）"""
-    driver = _find_playwright_driver()
-    if not driver:
-        print("警告：找不到 Playwright 驱动，签名服务可能无法启动")
-        return
+    import glob
 
-    try:
-        result = subprocess.run(
-            [driver, "install", "--dry-run", "chromium"],
-            capture_output=True, text=True, timeout=10,
-        )
-        needs_install = result.returncode != 0 or "chromium" not in result.stdout.lower()
-    except Exception:
-        needs_install = True
+    if getattr(sys, "frozen", False):
+        # ── frozen EXE 模式 ──────────────────────────────────────────
+        # 1. 先设置浏览器目录（必须在任何 playwright 调用之前）
+        browsers_dir = os.path.join(BASE_DIR, "browsers")
+        os.makedirs(browsers_dir, exist_ok=True)
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = browsers_dir
 
-    if needs_install:
+        # 2. 已有 chromium 则跳过
+        if glob.glob(os.path.join(browsers_dir, "chromium*")):
+            return
+
+        # 3. 用打包进来的 node.exe + package/cli.js 安装
+        meipass = getattr(sys, "_MEIPASS", "")
+        node = os.path.join(meipass, "playwright", "driver", "node.exe")
+        cli  = os.path.join(meipass, "playwright", "driver", "package", "cli.js")
+
+        if not os.path.exists(node) or not os.path.exists(cli):
+            print("警告：找不到 Playwright 驱动，签名服务可能无法启动")
+            return
+
         print("首次运行，正在下载 Chromium 浏览器（约 150MB）...")
         try:
-            subprocess.run([driver, "install", "chromium"], timeout=300, check=True)
+            subprocess.run(
+                [node, cli, "install", "chromium"],
+                env={**os.environ, "PLAYWRIGHT_BROWSERS_PATH": browsers_dir},
+                timeout=300, check=True,
+            )
             print("Chromium 下载完成")
         except Exception as e:
-            print(f"警告：Chromium 下载失败（{e}），签名服务可能无法启动")
+            print(f"警告：Chromium 下载失败（{e}），请手动运行：playwright install chromium")
+
+    else:
+        # ── 开发模式 ─────────────────────────────────────────────────
+        try:
+            from playwright._impl._driver import compute_driver_executable
+            driver = str(compute_driver_executable())
+            result = subprocess.run(
+                [driver, "install", "--dry-run", "chromium"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode != 0 or "chromium" not in result.stdout.lower():
+                print("正在下载 Chromium 浏览器（约 150MB）...")
+                subprocess.run([driver, "install", "chromium"], timeout=300, check=True)
+                print("Chromium 下载完成")
+        except Exception as e:
+            print(f"警告：浏览器检查失败（{e}），签名服务可能无法启动")
 
 
 sign_proc = None
