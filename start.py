@@ -22,6 +22,38 @@ else:
 
 SIGN_URL = os.environ.get("XHS_SIGN_URL", "http://localhost:5555/sign")
 
+
+def _ensure_browsers():
+    """确保 Playwright Chromium 已安装（首次运行时自动下载）"""
+    try:
+        from playwright._impl._driver import compute_driver_executable
+        driver = str(compute_driver_executable())
+        # 检查 chromium 是否已安装
+        result = subprocess.run(
+            [driver, "install", "--dry-run", "chromium"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0 or "chromium" not in result.stdout.lower():
+            print("首次运行，正在下载 Chromium 浏览器（约 150MB）...")
+            subprocess.run(
+                [driver, "install", "chromium"],
+                timeout=300,
+            )
+            print("Chromium 下载完成")
+    except FileNotFoundError:
+        # 可能是 --dry-run 不支持的旧版本，直接尝试安装
+        try:
+            print("正在确认 Chromium 浏览器...")
+            subprocess.run(
+                [sys.executable, "-m", "playwright", "install", "chromium"],
+                timeout=300,
+            )
+        except Exception as e:
+            print(f"警告：浏览器检查失败（{e}），签名服务可能无法启动")
+    except Exception as e:
+        print(f"警告：浏览器检查失败（{e}），签名服务可能无法启动")
+
+
 sign_proc = None
 web_proc = None
 mcp_proc = None
@@ -117,6 +149,54 @@ def run_service(service_name: str, extra_args: list[str]):
         sys.exit(1)
 
 
+_AUTOSTART_NAME = "XiaohongshuMCP"
+
+
+def _startup_folder() -> str:
+    """返回当前用户的 Windows 启动文件夹路径"""
+    import ctypes.wintypes
+    CSIDL_STARTUP = 7
+    buf = ctypes.create_unicode_buffer(ctypes.wintypes.MAX_PATH)
+    ctypes.windll.shell32.SHGetFolderPathW(0, CSIDL_STARTUP, 0, 0, buf)
+    return buf.value
+
+
+def install_autostart():
+    """注册开机自启：在 Windows 启动文件夹放置 VBS 脚本（静默，无控制台窗口）"""
+    if getattr(sys, "frozen", False):
+        exe = sys.executable  # start.exe
+        cmd = f'"{exe}"'
+    else:
+        # 开发模式用 pythonw 避免弹出控制台
+        pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+        if not os.path.exists(pythonw):
+            pythonw = sys.executable
+        script = os.path.abspath(__file__)
+        cmd = f'"{pythonw}" "{script}"'
+
+    vbs_path = os.path.join(_startup_folder(), f"{_AUTOSTART_NAME}.vbs")
+    vbs = (
+        f'Set ws = CreateObject("WScript.Shell")\n'
+        f'ws.Run {cmd!r}, 0, False\n'
+    )
+    with open(vbs_path, "w", encoding="utf-8") as f:
+        f.write(vbs)
+    print(f"已设置开机自启")
+    print(f"  VBS 脚本: {vbs_path}")
+    print(f"  命令: {cmd}")
+    print("  下次开机登录后服务将自动在后台启动（无控制台窗口）")
+
+
+def uninstall_autostart():
+    """取消开机自启：删除 VBS 脚本"""
+    vbs_path = os.path.join(_startup_folder(), f"{_AUTOSTART_NAME}.vbs")
+    if os.path.exists(vbs_path):
+        os.remove(vbs_path)
+        print(f"已取消开机自启，已删除 {vbs_path}")
+    else:
+        print("未找到自启动配置，无需取消")
+
+
 def main():
     global sign_proc, web_proc, mcp_proc
 
@@ -137,7 +217,23 @@ def main():
         "--mcp-port", type=int, default=18060,
         help="MCP HTTP 服务端口（默认 18060）",
     )
+    parser.add_argument(
+        "--install", action="store_true",
+        help="注册开机自启（写入 Windows 启动文件夹，静默后台运行）",
+    )
+    parser.add_argument(
+        "--uninstall", action="store_true",
+        help="取消开机自启",
+    )
     args, remaining = parser.parse_known_args()
+
+    if args.install:
+        install_autostart()
+        return
+
+    if args.uninstall:
+        uninstall_autostart()
+        return
 
     # --service 模式：直接运行指定服务
     if args.service:
@@ -147,6 +243,9 @@ def main():
     # ===== 编排模式：启动所有子进程 =====
     signal.signal(signal.SIGINT, cleanup)
     signal.signal(signal.SIGTERM, cleanup)
+
+    # 0. 确保 Playwright Chromium 已安装（首次运行自动下载）
+    _ensure_browsers()
 
     # 1. 签名服务
     sign_already_running = False
@@ -215,6 +314,14 @@ def main():
             print(f"  openclaw mcp add --transport sse xiaohongshu {mcp_url}/sse")
         else:
             print(f"  openclaw mcp add --transport http xiaohongshu {mcp_url}/mcp")
+
+    print("\n  开机自启（常驻后台）：")
+    if getattr(sys, "frozen", False):
+        print(f"  start.exe --install   # 设置开机自启（静默，无控制台）")
+        print(f"  start.exe --uninstall # 取消开机自启")
+    else:
+        print(f"  python start.py --install   # 设置开机自启")
+        print(f"  python start.py --uninstall # 取消开机自启")
     print()
 
     # 等待子进程
