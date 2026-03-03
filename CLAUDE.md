@@ -88,19 +88,6 @@ pip install pyinstaller
 python build.py
 ```
 
-## 开机自启（常驻后台）
-
-```bash
-# 注册开机自启（写入 Windows 启动文件夹，用 VBScript 静默启动，无控制台窗口）
-start.exe --install        # EXE 模式
-python start.py --install  # 开发模式
-
-# 取消开机自启
-start.exe --uninstall
-python start.py --uninstall
-```
-
-Cookie 已持久化到 `cookie.txt`，开机自启后无需重新登录。
 
 ## 注册到 Claude Code
 

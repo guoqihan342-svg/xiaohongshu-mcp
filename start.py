@@ -149,54 +149,6 @@ def run_service(service_name: str, extra_args: list[str]):
         sys.exit(1)
 
 
-_AUTOSTART_NAME = "XiaohongshuMCP"
-
-
-def _startup_folder() -> str:
-    """返回当前用户的 Windows 启动文件夹路径"""
-    import ctypes.wintypes
-    CSIDL_STARTUP = 7
-    buf = ctypes.create_unicode_buffer(ctypes.wintypes.MAX_PATH)
-    ctypes.windll.shell32.SHGetFolderPathW(0, CSIDL_STARTUP, 0, 0, buf)
-    return buf.value
-
-
-def install_autostart():
-    """注册开机自启：在 Windows 启动文件夹放置 VBS 脚本（静默，无控制台窗口）"""
-    if getattr(sys, "frozen", False):
-        exe = sys.executable  # start.exe
-        cmd = f'"{exe}"'
-    else:
-        # 开发模式用 pythonw 避免弹出控制台
-        pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
-        if not os.path.exists(pythonw):
-            pythonw = sys.executable
-        script = os.path.abspath(__file__)
-        cmd = f'"{pythonw}" "{script}"'
-
-    vbs_path = os.path.join(_startup_folder(), f"{_AUTOSTART_NAME}.vbs")
-    vbs = (
-        f'Set ws = CreateObject("WScript.Shell")\n'
-        f'ws.Run {cmd!r}, 0, False\n'
-    )
-    with open(vbs_path, "w", encoding="utf-8") as f:
-        f.write(vbs)
-    print(f"已设置开机自启")
-    print(f"  VBS 脚本: {vbs_path}")
-    print(f"  命令: {cmd}")
-    print("  下次开机登录后服务将自动在后台启动（无控制台窗口）")
-
-
-def uninstall_autostart():
-    """取消开机自启：删除 VBS 脚本"""
-    vbs_path = os.path.join(_startup_folder(), f"{_AUTOSTART_NAME}.vbs")
-    if os.path.exists(vbs_path):
-        os.remove(vbs_path)
-        print(f"已取消开机自启，已删除 {vbs_path}")
-    else:
-        print("未找到自启动配置，无需取消")
-
-
 def main():
     global sign_proc, web_proc, mcp_proc
 
@@ -217,23 +169,7 @@ def main():
         "--mcp-port", type=int, default=18060,
         help="MCP HTTP 服务端口（默认 18060）",
     )
-    parser.add_argument(
-        "--install", action="store_true",
-        help="注册开机自启（写入 Windows 启动文件夹，静默后台运行）",
-    )
-    parser.add_argument(
-        "--uninstall", action="store_true",
-        help="取消开机自启",
-    )
     args, remaining = parser.parse_known_args()
-
-    if args.install:
-        install_autostart()
-        return
-
-    if args.uninstall:
-        uninstall_autostart()
-        return
 
     # --service 模式：直接运行指定服务
     if args.service:
@@ -315,13 +251,6 @@ def main():
         else:
             print(f"  openclaw mcp add --transport http xiaohongshu {mcp_url}/mcp")
 
-    print("\n  开机自启（常驻后台）：")
-    if getattr(sys, "frozen", False):
-        print(f"  start.exe --install   # 设置开机自启（静默，无控制台）")
-        print(f"  start.exe --uninstall # 取消开机自启")
-    else:
-        print(f"  python start.py --install   # 设置开机自启")
-        print(f"  python start.py --uninstall # 取消开机自启")
     print()
 
     # 等待子进程
