@@ -23,35 +23,51 @@ else:
 SIGN_URL = os.environ.get("XHS_SIGN_URL", "http://localhost:5555/sign")
 
 
-def _ensure_browsers():
-    """确保 Playwright Chromium 已安装（首次运行时自动下载）"""
+def _find_playwright_driver() -> str | None:
+    """找到 Playwright 驱动可执行文件路径"""
+    # frozen EXE 模式：驱动在 _MEIPASS/playwright/driver/
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", BASE_DIR)
+        for name in ["playwright.cmd", "playwright.exe", "playwright"]:
+            candidate = os.path.join(meipass, "playwright", "driver", name)
+            if os.path.exists(candidate):
+                return candidate
+        return None
+
+    # 开发模式：通过 playwright 包获取
     try:
         from playwright._impl._driver import compute_driver_executable
         driver = str(compute_driver_executable())
-        # 检查 chromium 是否已安装
+        if os.path.exists(driver):
+            return driver
+    except Exception:
+        pass
+    return None
+
+
+def _ensure_browsers():
+    """确保 Playwright Chromium 已安装（首次运行时自动下载）"""
+    driver = _find_playwright_driver()
+    if not driver:
+        print("警告：找不到 Playwright 驱动，签名服务可能无法启动")
+        return
+
+    try:
         result = subprocess.run(
             [driver, "install", "--dry-run", "chromium"],
             capture_output=True, text=True, timeout=10,
         )
-        if result.returncode != 0 or "chromium" not in result.stdout.lower():
-            print("首次运行，正在下载 Chromium 浏览器（约 150MB）...")
-            subprocess.run(
-                [driver, "install", "chromium"],
-                timeout=300,
-            )
-            print("Chromium 下载完成")
-    except FileNotFoundError:
-        # 可能是 --dry-run 不支持的旧版本，直接尝试安装
+        needs_install = result.returncode != 0 or "chromium" not in result.stdout.lower()
+    except Exception:
+        needs_install = True
+
+    if needs_install:
+        print("首次运行，正在下载 Chromium 浏览器（约 150MB）...")
         try:
-            print("正在确认 Chromium 浏览器...")
-            subprocess.run(
-                [sys.executable, "-m", "playwright", "install", "chromium"],
-                timeout=300,
-            )
+            subprocess.run([driver, "install", "chromium"], timeout=300, check=True)
+            print("Chromium 下载完成")
         except Exception as e:
-            print(f"警告：浏览器检查失败（{e}），签名服务可能无法启动")
-    except Exception as e:
-        print(f"警告：浏览器检查失败（{e}），签名服务可能无法启动")
+            print(f"警告：Chromium 下载失败（{e}），签名服务可能无法启动")
 
 
 sign_proc = None
